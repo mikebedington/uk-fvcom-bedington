@@ -74,10 +74,6 @@ SUBROUTINE ADV_S
 # else
   REAL(SP) :: S1MIN, S1MAX, S2MIN, S2MAX
 # endif
-<<<<<<< HEAD
-
-=======
->>>>>>> 3005eda (TVD advection scheme for salt, temperature and FABM variables)
 
 !!$#  if defined (SPHERICAL)
 !!$  REAL(DP) :: TY,TXPI,TYPI
@@ -455,50 +451,12 @@ SUBROUTINE ADV_S
         IF(FIJ2 > S2MAX) FIJ2=S2MAX
 # else
 ! ------------------------------------------------------------------------------------------ !
-<<<<<<< HEAD
 !                                     Drawing the TVD skjeme
-=======
-!                                     Drawing the TVD scheme
->>>>>>> 3005eda (TVD advection scheme for salt, temperature and FABM variables)
 ! ------------------------------------------------------------------------------------------ !
 !     If A is upstream of B
        S_upstreamA=S1(Anear_node(I),K)+PSPX(Anear_node(I))*XUAdist(I)+PSPY(Anear_node(I))*YUAdist(I)
 !     If B is upstream of A
        S_upstreamB=S1(Bnear_node(I),K)+PSPX(Bnear_node(I))*XUBdist(I)+PSPY(Bnear_node(I))*YUBdist(I)                
-<<<<<<< HEAD
-=======
-
-!    The smoothness-parameter
-!     Fortran gets grumpy if the values turn infinite, which can be solved with a if-loop
-       IF (S1(IA,K).EQ.S1(IB,K)) THEN
-!     We can't have a gradient in between A and B if the smoothness parameter is infinite,
-!     so we can set the smoothness parameter to zero.
-          smoothrA    = 0.0_SP
-          smoothrB    = 0.0_SP
-         ELSE
-!     S_upstreamA is the "far upstream node", S1(IA,K) is upstream of S1(IB,K)
-          smoothrA    = (S1(IA,K)-S_upstreamA)/(S1(IB,K)-S1(IA,K))
-!     S_upstreamB id the "far upstream noed", S1(IB,K) is upstream of S1(IA,K)
-          smoothrB    = (S1(IB,K)-S_upstreamB)/(S1(IA,K)-S1(IB,K))
-       END IF
-
-!     The Flux-limiter 
-!      (superbee)
-       A_limiter = MAX(0.0_SP, MIN(1.0_SP, 2.0_SP*smoothrA), MIN(2.0_SP, smoothrA))
-       B_limiter = MAX(0.0_SP, MIN(1.0_SP, 2.0_SP*smoothrB), MIN(2.0_SP, smoothrB))
-
-!      (minmod)
-!       A_limiter = MAX(0.0_SP,MIN(1.0_SP,smoothrA))
-!       B_limiter = MAX(0.0_SP,MIN(1.0_SP,smoothrB))
-
-!       A_limiter = 0.0_SP;
-!       B_limiter = 0.0_SP;
-
-!     Calculating the salinity at the cell-wall in-between IA and IB
-       S12_A     = S1(IA,K)+0.5_SP*A_LIMITER*(S1(IB,K)-S1(IA,K))
-       S12_B     = S1(IB,K)+0.5_SP*B_LIMITER*(S1(IA,K)-S1(IB,K))
-# endif
->>>>>>> 3005eda (TVD advection scheme for salt, temperature and FABM variables)
 
 !     Smoothness-parameter
        IF (S1(IA,K).EQ.S1(IB,K)) THEN
@@ -599,8 +557,7 @@ SUBROUTINE ADV_S
        END IF
 #      endif
 
-     ! WRITE(3178,*) TXX,TYY,EXFLUX
-     ! WRITE(3177,*) K,FXX,FYY
+
      END DO
 
 
@@ -652,6 +609,7 @@ SUBROUTINE ADV_S
 
   S1_FRESH=S1
 
+
   IF(RIVER_TS_SETTING == 'calculated') THEN
      IF(RIVER_INFLOW_LOCATION == 'node') THEN
         IF(NUMQBC > 0) THEN
@@ -682,6 +640,24 @@ SUBROUTINE ADV_S
         END IF
      END IF
   END IF
+<<<<<<< HEAD
+  !
+=======
+  !---------------------Plume flux part-----------------------------------------
+  ! Added by Qin 05/03/2019
+# if defined(PLUME)
+   IF(NUMPLM > 0) THEN
+            SPLM = SPLM+OFFS(1,1)
+           DO J=1,NUMPLM
+              JJ=INODEPLM(J)
+              DO K=1,KBM1
+                 S1_FRESH(JJ,K)=SPLM(J)+OFFS(1,1)
+                 XFLUX(JJ,K)=XFLUX(JJ,K) - FLXPLM(J,K)*VDISTPLM(J,K)*SPLM(J,K)
+              END DO
+           END DO
+   END IF
+# endif
+>>>>>>> eb53d63 (modifications for adding plumes with volumn, salinity, temperature in the domain from a namelist.)
 
   ! -------------------------------------------------------------------
   !        The horizontal term of advection is neglected here
@@ -882,7 +858,6 @@ SUBROUTINE ADV_S
 
            TEMP=0.5*((WWWS(I,K)+ABS(WWWS(I,K)))*S1_S(I,K)-        &
                 (WWWS(I,K+1)-ABS(WWWS(I,K+1)))*S1_S(I,K))*(DTI/DTFA(I))/DZ(I,K)
-
            BETAOUT(I,K)=(S1_S(I,K)-SMIN)/(TEMP+1.E-10)
 
            WWWSF(I,K)=0.5*MIN(1.,BETAIN(I,K-1),BETAOUT(I,K))*(WWWS(I,K)+ABS(WWWS(I,K))) + &
@@ -1095,6 +1070,18 @@ SUBROUTINE ADV_S
         END IF
      END IF
   END IF
+!--  For Plume influx ------------------------------------
+# if defined(PLUME)
+    IF(NUMPLM > 0) THEN
+           DO J=1,NUMPLM
+              JJ=INODEPLM(J)
+              DO K=1,KBM1
+                 XFLUX(JJ,K)=XFLUX(JJ,K) - FLXPLM(J,K)*VDISTPLM(J,K)*SPLM(J,K)
+              END DO
+           END DO
+    END IF
+# endif
+
 !---------------------------------------------------------------------
 ! Her slutter if !defined (MPDATA). Litt rart at det ikke skjer et hakk lenger ned?
 # endif
@@ -1122,7 +1109,6 @@ SUBROUTINE ADV_S
      END DO
   END IF
 
- 
 
   !--Update Salinity-------------------------------------------------------------!
   !
@@ -1172,8 +1158,6 @@ SUBROUTINE ADV_S
 
   DO I=1,M
      DO K=1,KBM1
-    !  WRITE(3179,*) XFLUX(I,K)/ART1(I),DTI
-    !  WRITE(3180,*) DT(I),DTFA(I),DZ(I,K)
 #    if !defined (MPDATA)     
         !       SF1(I,K)=(S1(I,K)-XFLUX(I,K)/ART1(I)*(DTI/DT(I)))*(DT(I)/DTFA(I))
 #      if !defined (SEMI_IMPLICIT)

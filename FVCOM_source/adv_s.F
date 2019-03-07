@@ -75,6 +75,7 @@ SUBROUTINE ADV_S
   REAL(SP) :: S1MIN, S1MAX, S2MIN, S2MAX
 # endif
 
+
 !!$#  if defined (SPHERICAL)
 !!$  REAL(DP) :: TY,TXPI,TYPI
 !!$  REAL(DP) :: XTMP1,XTMP
@@ -609,7 +610,6 @@ SUBROUTINE ADV_S
 
   S1_FRESH=S1
 
-
   IF(RIVER_TS_SETTING == 'calculated') THEN
      IF(RIVER_INFLOW_LOCATION == 'node') THEN
         IF(NUMQBC > 0) THEN
@@ -640,7 +640,6 @@ SUBROUTINE ADV_S
         END IF
      END IF
   END IF
-  !
 
   ! -------------------------------------------------------------------
   !        The horizontal term of advection is neglected here
@@ -841,6 +840,7 @@ SUBROUTINE ADV_S
 
            TEMP=0.5*((WWWS(I,K)+ABS(WWWS(I,K)))*S1_S(I,K)-        &
                 (WWWS(I,K+1)-ABS(WWWS(I,K+1)))*S1_S(I,K))*(DTI/DTFA(I))/DZ(I,K)
+
            BETAOUT(I,K)=(S1_S(I,K)-SMIN)/(TEMP+1.E-10)
 
            WWWSF(I,K)=0.5*MIN(1.,BETAIN(I,K-1),BETAOUT(I,K))*(WWWS(I,K)+ABS(WWWS(I,K))) + &
@@ -1080,6 +1080,7 @@ SUBROUTINE ADV_S
      END DO
   END IF
 
+ 
 
   !--Update Salinity-------------------------------------------------------------!
   !
