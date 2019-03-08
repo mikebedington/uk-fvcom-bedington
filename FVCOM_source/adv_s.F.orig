@@ -75,6 +75,7 @@ SUBROUTINE ADV_S
   REAL(SP) :: S1MIN, S1MAX, S2MIN, S2MAX
 # endif
 
+
 !!$#  if defined (SPHERICAL)
 !!$  REAL(DP) :: TY,TXPI,TYPI
 !!$  REAL(DP) :: XTMP1,XTMP
@@ -609,7 +610,6 @@ SUBROUTINE ADV_S
 
   S1_FRESH=S1
 
-
   IF(RIVER_TS_SETTING == 'calculated') THEN
      IF(RIVER_INFLOW_LOCATION == 'node') THEN
         IF(NUMQBC > 0) THEN
@@ -641,7 +641,6 @@ SUBROUTINE ADV_S
      END IF
   END IF
 <<<<<<< HEAD
-  !
 =======
   !---------------------Plume flux part-----------------------------------------
   ! Added by Qin 05/03/2019
@@ -651,13 +650,13 @@ SUBROUTINE ADV_S
            DO J=1,NUMPLM
               JJ=INODEPLM(J)
               DO K=1,KBM1
-                 S1_FRESH(JJ,K)=SPLM(J)+OFFS(1,1)
+                 S1_FRESH(JJ,K)=SPLM(J,K)
                  XFLUX(JJ,K)=XFLUX(JJ,K) - FLXPLM(J,K)*VDISTPLM(J,K)*SPLM(J,K)
               END DO
            END DO
    END IF
 # endif
->>>>>>> eb53d63 (modifications for adding plumes with volumn, salinity, temperature in the domain from a namelist.)
+>>>>>>> 05a2df3 (fix bugs related plume within the MPDATA scheme)
 
   ! -------------------------------------------------------------------
   !        The horizontal term of advection is neglected here
@@ -858,6 +857,7 @@ SUBROUTINE ADV_S
 
            TEMP=0.5*((WWWS(I,K)+ABS(WWWS(I,K)))*S1_S(I,K)-        &
                 (WWWS(I,K+1)-ABS(WWWS(I,K+1)))*S1_S(I,K))*(DTI/DTFA(I))/DZ(I,K)
+
            BETAOUT(I,K)=(S1_S(I,K)-SMIN)/(TEMP+1.E-10)
 
            WWWSF(I,K)=0.5*MIN(1.,BETAIN(I,K-1),BETAOUT(I,K))*(WWWS(I,K)+ABS(WWWS(I,K))) + &
@@ -1070,18 +1070,6 @@ SUBROUTINE ADV_S
         END IF
      END IF
   END IF
-!--  For Plume influx ------------------------------------
-# if defined(PLUME)
-    IF(NUMPLM > 0) THEN
-           DO J=1,NUMPLM
-              JJ=INODEPLM(J)
-              DO K=1,KBM1
-                 XFLUX(JJ,K)=XFLUX(JJ,K) - FLXPLM(J,K)*VDISTPLM(J,K)*SPLM(J,K)
-              END DO
-           END DO
-    END IF
-# endif
-
 !---------------------------------------------------------------------
 ! Her slutter if !defined (MPDATA). Litt rart at det ikke skjer et hakk lenger ned?
 # endif
@@ -1109,6 +1097,7 @@ SUBROUTINE ADV_S
      END DO
   END IF
 
+ 
 
   !--Update Salinity-------------------------------------------------------------!
   !
