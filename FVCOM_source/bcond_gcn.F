@@ -679,7 +679,7 @@
         FLXPLM    = FLXPLM*RAMP
       END IF
 #  else
-  !  UPDATE_PLUMES_CALCULATED (waiting for Håward's input, see UPDATE_HEATING_CALCULATED as an example)
+       CALL  UPDATE_PLUMES_CALCULATED(FLXPLM,TPLM,SPLM,VDISTPLM,FABMPLM)
 # endif
 # endif   
 !----------------------------------      

@@ -43,7 +43,9 @@ MODULE MOD_FORCE
 # if defined (HEATING_SOLAR)
   USE MOD_SOLAR
 # endif
-
+# if defined (PLUME_CALCULATED)
+  USE MOD_PLUME
+# endif
   IMPLICIT NONE
 
   SAVE
@@ -678,7 +680,18 @@ CONTAINS
     IF (FABM_MODEL) CALL OBC_FABM
 # endif    
     CALL RIVER_DISCHARGE
+<<<<<<< HEAD
 # if !defined (HEATING_CALCULATED) && !defined (HEATING_SOLAR)    
+=======
+
+# if defined (PLUME) 
+# if !defined (PLUME_CALCULATED)
+    CALL  PLUME_DISCHARGE	
+# endif
+# endif 
+	
+# if !defined (HEATING_CALCULATED) && !defined (HEATING_CALCULATED_GL) && !defined (HEATING_SOLAR)    
+>>>>>>> 7325a06 (Add subroutine to allocate plume variables when PLUME_CALCULATED is defined; modify the FABM variable from the plume model from 2D to 3D)
     CALL SURFACE_HEATING
 # endif    
     CALL SURFACE_WINDSTRESS
@@ -1810,7 +1823,7 @@ CONTAINS
   !===================================================================
   !==================================================================
   ! READ PLUME PARAMETERA, added by Qin 04/03/2019
-    
+# if !defined(PLUME_CALCULATED)    
   SUBROUTINE PLUME_DISCHARGE 
 # if defined (FABM)
   USE MOD_FABM_DATA
@@ -1931,7 +1944,7 @@ CONTAINS
 
     ! ALLOCATE THE SPACE FOR THE PLUME DATA
     ALLOCATE(INODEPLM(NUMPLM))
-    ALLOCATE(VDISTPLM(NUMPLM,KBM1));  VDISTPLM = 0.0_SP
+    ALLOCATE(VDISTPLM(NUMPLM,KBM1));  VDISTPLM = 0
     ALLOCATE(FLXPLM(NUMPLM,KBM1));    FLXPLM   = 0.0_SP
 # if defined (FABM)
     ALLOCATE(FABMPLM(NUMPLM,KBM1,size(model%state_variables))); FABMPLM  = 0.0_SP
@@ -2140,7 +2153,7 @@ CONTAINS
 
 
   END SUBROUTINE PLUME_DISCHARGE
-  
+# endif 
     !================================================================
   !================================================================  
   SUBROUTINE CHECK_PLUME_FILE(NCF,PERIOD)
@@ -2271,7 +2284,7 @@ CONTAINS
          &CTING 'PSU'")
 		 
   END SUBROUTINE CHECK_PLUME_FILE
->>>>>>> 117c1d5 (adding fabm variables when updating plume)
+>>>>>>> 7325a06 (Add subroutine to allocate plume variables when PLUME_CALCULATED is defined; modify the FABM variable from the plume model from 2D to 3D)
   !================================================================
   !================================================================
 
@@ -13464,273 +13477,6 @@ CONTAINS
 
   END SUBROUTINE UPDATE_RIVERS
   !==============================================================================|
-<<<<<<< HEAD
-=======
-  ! UPDATE PLUMES, added by Qin 05/03/2019
-  !==============================================================================|
-  SUBROUTINE UPDATE_PLUMES(NOW,FLUX,VDIST,TEMP,SALT,FABMR)
-# if defined (FABM)
-    USE MOD_FABM_DATA
-# endif  
-
-    IMPLICIT NONE
-    TYPE(TIME), INTENT(IN) :: NOW
-    REAL(SP), ALLOCATABLE :: FLUX(:,:)
-    REAL(SP), ALLOCATABLE :: VDIST(:,:)
-    REAL(SP), ALLOCATABLE, OPTIONAL :: TEMP(:,:)
-    REAL(SP), ALLOCATABLE, OPTIONAL :: SALT(:,:)
-    REAL(SP), ALLOCATABLE, OPTIONAL :: FABMR(:,:,:)
-
-    REAL(SP), POINTER :: VNP(:,:), VPP(:,:)
-
-    REAL(SP), ALLOCATABLE :: CURRENT(:,:)
-    TYPE(TIME) :: PLMTIME
-
-    TYPE(NCFILE), POINTER :: NCF
-    TYPE(NCVAR), POINTER :: VAR_N
-    TYPE(NCVAR), POINTER :: VAR_P
-    TYPE(NCFTIME), POINTER :: FTM
-    INTEGER :: STATUS, I, J, NRSF,IND,NS
-#if defined (FABM)
-    INTEGER :: IFABM,JJ,J1,J2,KK
-#endif
-
-    IF(.NOT. ALLOCATED(FLUX)) CALL FATAL_ERROR &
-         &("THE PLUME FLUX VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-
-    IF(.NOT. ALLOCATED(VDIST)) CALL FATAL_ERROR &
-         &("THE PLUME VERTICAL DISTRIBUTION  VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-
-
-    IF(PRESENT(TEMP)) THEN
-       IF(.NOT. ALLOCATED(TEMP)) CALL FATAL_ERROR &
-            &("THE PLUME TEMP VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-    END IF
-
-    IF(PRESENT(SALT)) THEN
-       IF(.NOT. ALLOCATED(SALT)) CALL FATAL_ERROR &
-            &("THE PLUME SALT VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-    END IF
-  
-# if defined (FABM)
-    IF(PRESENT(FABMR)) THEN
-       IF(.NOT. ALLOCATED(FABMR)) CALL FATAL_ERROR &
-            &("THE PLUME FABMR VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-    END IF
-# endif
-
-    DO I = 1, SIZE(PLUME_FORCING) ! (NUMBER OF FILES)
-       
-       SELECT CASE (PLUME_KIND)
-       CASE(PRDC)
-          
-        CALL FATAL_ERROR("PERIODIC PLUME Not Set Up Yet")     
-          
-       CASE(VRBL)
-           
-          PLMTIME = NOW
-       END SELECT
-       
-
-       NCF => PLUME_FORCING(I)%NCF
-       FTM => NCF%FTIME
-
-       NRSF = PLUME_FORCING(I)%PLUMES_IN_FILE
-
-       ! PLUME FLUX
-       VAR_N => PLUME_FORCING(I)%FLUX_N
-       VAR_P => PLUME_FORCING(I)%FLUX_P
-       CALL UPDATE_VAR_BRACKET(NCF,VAR_P,VAR_N,PLMTIME,STATUS)
-       IF (STATUS /= 0) THEN
-          CALL FATAL_ERROR("COULD NOT UPATE PLUME_FILE TIME BRACKET: BOUNDS EXCEEDED?")
-       end if
-
-       ALLOCATE(CURRENT(NRSF,KBM1))
-
-       CALL NC_POINT_VAR(VAR_N,VNP)
-       CALL NC_POINT_VAR(VAR_P,VPP)
-
-       !====================================================
-       ! Linear interpolation between time points
-       !CURRENT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
-       !
-       ! OR
-       !
-       ! Nearest time sets the value
-       CURRENT = VNP
-       if (FTM%PREV_WGHT .gt. 0.5_sp) CURRENT = VPP
-       !====================================================
-
-       DO J =1,NRSF
-          IND = PLUME_FORCING(I)%PLM_FILE2LOC(J)
-          IF(IND /= 0) FLUX(IND,:) = CURRENT(J,:)
-       END DO
-
-       DEALLOCATE(CURRENT)
-      
-       ! PLUME VERTICAL DISTRIBUTION
-       VAR_N => PLUME_FORCING(I)%VDIST_N
-       VAR_P => PLUME_FORCING(I)%VDIST_P
-       CALL UPDATE_VAR_BRACKET(NCF,VAR_P,VAR_N,PLMTIME,STATUS)
-       IF (STATUS /= 0) THEN
-          CALL FATAL_ERROR("COULD NOT UPATE PLUME_FILE TIME BRACKET: BOUNDS EXCEEDED?")
-       end if
-
-       ALLOCATE(CURRENT(NRSF,KBM1))
-
-       CALL NC_POINT_VAR(VAR_N,VNP)
-       CALL NC_POINT_VAR(VAR_P,VPP)
-
-       !====================================================
-       ! Linear interpolation between time points
-       !CURRENT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
-       !
-       ! OR
-       !
-       ! Nearest time sets the value
-       CURRENT = VNP
-       if (FTM%PREV_WGHT .gt. 0.5_sp) CURRENT = VPP
-       !====================================================
-
-       DO J =1,NRSF
-          IND = PLUME_FORCING(I)%PLM_FILE2LOC(J)
-          IF(IND /= 0) VDIST(IND,:) = CURRENT(J,:)
-       END DO
-
-       DEALLOCATE(CURRENT)
-
-
-       IF(PRESENT(SALT)) THEN
-
-          ! PLUME SALT
-          VAR_N => PLUME_FORCING(I)%SALT_N
-          VAR_P => PLUME_FORCING(I)%SALT_P
-          CALL UPDATE_VAR_BRACKET(NCF,VAR_P,VAR_N,PLMTIME,STATUS)
-          IF (STATUS /= 0) THEN
-             CALL FATAL_ERROR("COULD NOT UPATE PLUME_FILE TIME BRACKET: BOUNDS EXCEEDED?")
-          end if
-
-          ALLOCATE(CURRENT(NRSF,KBM1))
-
-          CALL NC_POINT_VAR(VAR_N,VNP)
-          CALL NC_POINT_VAR(VAR_P,VPP)        
-
-          !====================================================
-          ! Linear interpolation between time points
-          !CURRENT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
-          !
-          ! OR
-          !
-          ! Nearest time sets the value
-          CURRENT = VNP
-          if (FTM%PREV_WGHT .gt. 0.5_sp) current = VPP
-          !====================================================
-
-
-          DO J =1,NRSF
-             IND = PLUME_FORCING(I)%PLM_FILE2LOC(J)
-             IF(IND /= 0) SALT(IND,:) = CURRENT(J,:)
-          END DO
-
-          DEALLOCATE(CURRENT)
-       END IF
-
-       IF(PRESENT(TEMP)) THEN
-
-          ! PLUME TEMP
-          VAR_N => PLUME_FORCING(I)%TEMP_N
-          VAR_P => PLUME_FORCING(I)%TEMP_P
-          CALL UPDATE_VAR_BRACKET(NCF,VAR_P,VAR_N,PLMTIME,STATUS)
-          IF (STATUS /= 0) THEN
-             CALL FATAL_ERROR("COULD NOT UPATE PLM_FILE TIME BRACKET: BOUNDS EXCEEDED?")
-          end if
-
-          ALLOCATE(CURRENT(NRSF,KBM1))
-
-          CALL NC_POINT_VAR(VAR_N,VNP)
-          CALL NC_POINT_VAR(VAR_P,VPP)        
-
-          !====================================================
-          ! Linear interpolation between time points
-          !CURRENT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
-          !
-          ! OR
-          !
-          ! Nearest time sets the value
-          CURRENT = VNP
-          if (FTM%PREV_WGHT .gt. 0.5_sp) current = VPP
-          !====================================================
-
-          DO J =1,NRSF
-             IND = PLUME_FORCING(I)%PLM_FILE2LOC(J)
-             IF(IND /= 0) TEMP(IND,:) = CURRENT(J,:)
-          END DO
-
-          DEALLOCATE(CURRENT)
-       END IF
-
-
-# if defined (FABM)
-       IF(PRESENT(FABMR)) THEN
-
-       DO IFABM=1,size(model%state_variables)
-
-          IF(ASSOCIATED(PLUME_FORCING(I)%FABM_N(IFABM)%P))THEN
-             ! Plume data for this variable is available in the current plume file
-             VAR_N => PLUME_FORCING(I)%FABM_N(IFABM)%P
-             VAR_P => PLUME_FORCING(I)%FABM_P(IFABM)%P
-             CALL UPDATE_VAR_BRACKET(NCF,VAR_P,VAR_N,PLMTIME,STATUS)
-             IF (STATUS /= 0) THEN
-                CALL FATAL_ERROR("COULD NOT UPDATE PLUME_FILE TIME BRACKET: BOUNDS EXCEEDED?")
-             END IF
-
-             ALLOCATE(CURRENT(NRSF,KBM1))
-
-             CALL NC_POINT_VAR(VAR_N,VNP)
-             CALL NC_POINT_VAR(VAR_P,VPP)
-
-             !====================================================
-             ! Linear interpolation between time points
-             !CURRENT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
-             !
-             ! OR
-             !
-             ! Nearest time sets the value
-             CURRENT = VNP
-             if (FTM%PREV_WGHT .gt. 0.5_sp) current = VPP
-             !====================================================
-
-             DO J =1,NRSF
-                IND = PLUME_FORCING(I)%PLM_FILE2LOC(J)
-                IF(IND /= 0)  FABMR(IND,1:KBM1,IFABM) = CURRENT(J,1:KBM1)
-             END DO
-
-             DEALLOCATE(CURRENT)
-            ! If variable is not present, decide whether it gets diluted or not
-            ! NOT SURE IF IT IS NEEDED FOR PLUME MODEL, Qin 05/03/2019
-            ! ELSE IF ( model%state_variables(IFABM)%no_river_dilution) THEN 
-               ! IF(NUMQBC > 0) THEN
-                 ! IF(RIVER_INFLOW_LOCATION == 'node') THEN
-                   ! DO J=1,NUMQBC
-                     ! JJ=INODEQ(J)
-                     ! FABMR(J,IFABM)=SUM(FABM_ALL(JJ,1:KBM1,IFABM))/KBM1
-                   ! ENDDO
-                 ! ELSE IF(RIVER_INFLOW_LOCATION == 'edge') THEN
-                   ! CALL FATAL_ERROR("PLUME_INFLOW_LOCATION NOT SET UP FOR 'EDGE' YET")
-                 ! END IF ! IF node or edge
-               ! END IF ! if NUMQBC > 0
-               !             
-          ENDIF  ! If data is available for the current state variable in the current river file
-       END DO ! For each pelagic FABM state variable
-
-       END IF ! If argument FABM is present
-#endif
-
-    END DO ! FOR EACH FILE
-
-  END SUBROUTINE UPDATE_PLUMES
-  !==============================================================================|
->>>>>>> 117c1d5 (adding fabm variables when updating plume)
   SUBROUTINE UPDATE_GROUNDWATER(NOW,GW_FLUX,GW_TEMP,GW_SALT)
     IMPLICIT NONE
     TYPE(TIME), INTENT(IN) :: NOW
