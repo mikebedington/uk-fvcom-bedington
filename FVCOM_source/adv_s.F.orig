@@ -645,6 +645,7 @@ SUBROUTINE ADV_S
   !---------------------Plume flux part-----------------------------------------
   ! Added by Qin 05/03/2019
 # if defined(PLUME)
+# if !defined(PLUME_CALCULATED)
    IF(NUMPLM > 0) THEN
             SPLM = SPLM+OFFS(1,1)
            DO J=1,NUMPLM
@@ -655,8 +656,16 @@ SUBROUTINE ADV_S
               END DO
            END DO
    END IF
+# else
+   DO I=1,M
+         DO K=1,KBM1
+             XFLUX(I,K)=XFLUX(I,K) - FLXPLM(I,K)*VDISTPLM(I,K)*SPLM(I,K)  
+         END DO
+   END DO
 # endif
->>>>>>> 05a2df3 (fix bugs related plume within the MPDATA scheme)
+
+# endif
+>>>>>>> 78fb2a7 (modity the code to deal with the plume model output variables which in a shape of [0:MT,KBM1])
 
   ! -------------------------------------------------------------------
   !        The horizontal term of advection is neglected here
@@ -1070,6 +1079,29 @@ SUBROUTINE ADV_S
         END IF
      END IF
   END IF
+<<<<<<< HEAD
+=======
+!--  For Plume influx ------------------------------------
+# if defined(PLUME)
+# if !defined(PLUME_CALCULATED)
+    IF(NUMPLM > 0) THEN
+           DO J=1,NUMPLM
+              JJ=INODEPLM(J)
+              DO K=1,KBM1
+                 XFLUX(JJ,K)=XFLUX(JJ,K) - FLXPLM(J,K)*VDISTPLM(J,K)*SPLM(J,K)
+              END DO
+           END DO
+    END IF
+# else
+   DO I=1,M
+         DO K=1,KBM1
+             XFLUX(I,K)=XFLUX(I,K) - FLXPLM(I,K)*VDISTPLM(I,K)*SPLM(I,K)  
+         END DO
+   END DO
+# endif
+# endif
+
+>>>>>>> 78fb2a7 (modity the code to deal with the plume model output variables which in a shape of [0:MT,KBM1])
 !---------------------------------------------------------------------
 ! Her slutter if !defined (MPDATA). Litt rart at det ikke skjer et hakk lenger ned?
 # endif
