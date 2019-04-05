@@ -151,7 +151,26 @@ MODULE MOD_FORCE
   END TYPE A_RIVER_FILE
   TYPE(A_RIVER_FILE), ALLOCATABLE,PUBLIC :: RIVER_FORCING(:)
 
+  ! =================================================================
+  ! PLUME FORCING VARIABLES FOR UPDATE ANE SETUP, added by Qin 04/03/2019
+  ! NOTE PLUMS MIGHT HAVE THE SAME PAIN AS RIVERS ARE - EACH PROCESSOR HAS TO FETCH ITS OWN DATA!
+  CHARACTER(LEN=Char_max_attlen), PUBLIC,ALLOCATABLE :: PLUME_FORCING_COMMENTS(:)
+  TYPE A_PLUME_FILE
+     TYPE(NCFILE), POINTER :: NCF
+     INTEGER PLUMES_IN_FILE     
+     TYPE(TIME) :: PLUME_PERIOD  
+     INTEGER, ALLOCATABLE :: PLM_FILE2LOC(:)
+     TYPE(NCVAR), POINTER :: FLUX_N, FLUX_P
+     TYPE(NCVAR), POINTER :: VDIST_N,VDIST_P
+     TYPE(NCVAR), POINTER :: TEMP_N, TEMP_P
+     TYPE(NCVAR), POINTER :: SALT_N, SALT_P
 
+# if defined (FABM)
+     TYPE (TYPE_NCVAR_POINTER),DIMENSION(:),ALLOCATABLE :: FABM_N,FABM_P
+# endif
+     ! ADD MORE HERE!
+  END TYPE A_PLUME_FILE
+  TYPE(A_PLUME_FILE), ALLOCATABLE,PUBLIC :: PLUME_FORCING(:)
 
   ! =================================================================
   ! GROUND WATER FORCING VARIABLES FOR UPDATE AND SETUP
@@ -265,7 +284,7 @@ MODULE MOD_FORCE
   !  TYPE(NCVAR), POINTER :: HEAT_LTNT_N, HEAT_LTNT_P ! LATENT
   !  TYPE(NCVAR), POINTER :: HEAT_SNS_N, HEAT_SNS_P   ! SENSIBLE
   TYPE(NCVAR), POINTER :: HEAT_NET_N, HEAT_NET_P   ! NET HEAT FLUX
-# if defined (HEATING_CALCULATED)
+# if defined (HEATING_CALCULATED) || (HEATING_CALCULATED_GL) 
   TYPE(NCVAR), POINTER :: T_AIR_N, T_AIR_P   
   TYPE(NCVAR), POINTER :: RH_AIR_N, RH_AIR_P   
   TYPE(NCVAR), POINTER :: PA_AIR_N, PA_AIR_P   
@@ -403,11 +422,10 @@ MODULE MOD_FORCE
 # if defined (WET_DRY)
   TYPE(NCVAR), POINTER :: FABM_WN_N, FABM_WN_P ! WET NODES
   TYPE(NCVAR), POINTER :: FABM_WC_N, FABM_WC_P ! WET CELLS
-!  TYPE(NCVAR), POINTER :: SEDIMENTS_WN_N, SEDIMENTS_WN_P ! WET NODES   WHAT ARE THESE DOING HERE?? RJT 03/2020
-!  TYPE(NCVAR), POINTER :: SEDIMENTS_WC_N, SEDIMENTS_WC_P ! WET CELLS   WHAT ARE THESE DOING HERE?? RJT 03/2020
+  TYPE(NCVAR), POINTER :: SEDIMENTS_WN_N, SEDIMENTS_WN_P ! WET NODES
+  TYPE(NCVAR), POINTER :: SEDIMENTS_WC_N, SEDIMENTS_WC_P ! WET CELLS
 # endif
   TYPE(NCVAR), POINTER :: FABM_UA_N, FABM_UA_P ! UARD_OBCN
-  TYPE(NCVAR), POINTER :: FABM_DTFA_N, FABM_DTFA_P ! DTFA RJT 2020
 
 # endif
 
@@ -502,13 +520,13 @@ MODULE MOD_FORCE
 
   PUBLIC :: SETUP_FORCING
   PUBLIC :: UPDATE_GROUNDWATER
-# if !defined (HEATING_CALCULATED) && !defined (HEATING_SOLAR)
+# if !defined (HEATING_CALCULATED) && !defined (HEATING_CALCULATED_GL) && !defined (HEATING_SOLAR)
   PUBLIC :: UPDATE_HEAT
 # endif
   PUBLIC :: UPDATE_WIND
   PUBLIC :: UPDATE_WAVE
 
-# if defined (HEATING_CALCULATED)
+# if defined (HEATING_CALCULATED) || (HEATING_CALCULATED_GL)
   PUBLIC :: UPDATE_HEAT_CALCULATED
 # endif
 # if defined (HEATING_SOLAR)
@@ -533,7 +551,14 @@ MODULE MOD_FORCE
   PUBLIC :: UPDATE_RIVERS
   PUBLIC :: UPDATE_OBC_TEMP
   PUBLIC :: UPDATE_OBC_SALT
-
+  
+# if defined (PLUME)
+# if !defined (PLUME_CALCULATED)
+  PUBLIC :: UPDATE_PLUMES
+# else
+  PUBLIC :: UPDATE_PLUMES_CALCULATED
+# endif
+# endif  
 # if defined (WATER_QUALITY)
   PUBLIC :: UPDATE_OBC_WQM
 # endif  
@@ -568,11 +593,11 @@ CONTAINS
 
     NULLIFY(GWATER_FILE)
 
-# if !defined (HEATING_CALCULATED) && !defined (HEATING_SOLAR)
+# if !defined (HEATING_CALCULATED) && !defined (HEATING_CALCULATED_GL) && !defined (HEATING_SOLAR)
     NULLIFY(HEAT_FILE,HEAT_INTP_N, HEAT_INTP_C, HEAT_SWV_P,&
          & HEAT_SWV_N)
 # endif
-# if defined (HEATING_CALCULATED)
+# if defined (HEATING_CALCULATED) || (HEATING_CALCULATED_GL)
 # if defined (OBSICE)
     NULLIFY(HEAT_FILE,HEAT_INTP_N, HEAT_INTP_C, T_AIR_P, T_AIR_N,  &
          &  RH_AIR_P, RH_AIR_N, PA_AIR_P, PA_AIR_N, DLW_AIR_P,     &
@@ -662,7 +687,6 @@ CONTAINS
          & FABM_WN_N,    FABM_WN_P,     &
          & FABM_WC_N,    FABM_WC_P,     &
 # endif
-         & FABM_DTFA_N,    FABM_DTFA_P, &  ! RJT 2020
          & FABM_UA_N,    FABM_UA_P      )
 # endif
 
@@ -680,13 +704,20 @@ CONTAINS
     IF (FABM_MODEL) CALL OBC_FABM
 # endif    
     CALL RIVER_DISCHARGE
-# if !defined (HEATING_CALCULATED) && !defined (HEATING_SOLAR)    
+
+# if defined (PLUME) 
+# if !defined (PLUME_CALCULATED)
+    CALL  PLUME_DISCHARGE	
+# endif
+# endif 
+	
+# if !defined (HEATING_CALCULATED) && !defined (HEATING_CALCULATED_GL) && !defined (HEATING_SOLAR)    
     CALL SURFACE_HEATING
 # endif    
     CALL SURFACE_WINDSTRESS
     CALL SURFACE_PRECIPITATION
     CALL SURFACE_AIRPRESSURE
-# if defined (HEATING_CALCULATED)
+# if defined (HEATING_CALCULATED) || (HEATING_CALCULATED_GL)
     CALL SURFACE_HEATING_CALCULATED
 # endif    
 # if defined (HEATING_SOLAR) 
@@ -1067,7 +1098,7 @@ CONTAINS
     END SELECT
     !==================================================================
 
-    ! ---------- new: 2016 , april, Karsten Lettmann after Hint by Qi and ayumi.fujisaki@noaa.gov------
+    ! ---------- new: 2016 , april, after Hint by Qi and ayumi.fujisaki@noaa.gov------
     ! Initialize some variables 
     ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
@@ -1806,6 +1837,473 @@ CONTAINS
 
 101 FORMAT(1X,A26,F10.4)  
   END SUBROUTINE TIDAL_ELEVATION
+  
+  !===================================================================
+  !==================================================================
+  ! READ PLUME PARAMETERA, added by Qin 04/03/2019
+# if defined (PLUME)
+# if !defined(PLUME_CALCULATED)    
+  SUBROUTINE PLUME_DISCHARGE 
+# if defined (FABM)
+  USE MOD_FABM_DATA
+# endif
+    IMPLICIT NONE
+    INTEGER :: I, J,K, fcnt,rcnt,status, nfiles,nrs,IOS,NS
+# if defined (FABM)
+    INTEGER :: IFABM
+# endif
+    TYPE(A_PLUME_FILE) DUMMY
+    TYPE(NCFILE),POINTER :: NCF
+    TYPE(NCDIM), POINTER :: DIM
+    TYPE(NCVAR), POINTER :: VAR
+    TYPE(NCVAR), POINTER :: DUM_P
+
+    REAL(SP), POINTER :: STORAGE_VEC(:),STORAGE_ARR(:,:)
+    LOGICAL :: FOUND, MINE
+    CHARACTER(LEN=7) :: chr
+    character(len=20), allocatable :: dist_strings(:)
+
+
+    IF(DBG_SET(DBG_SBR)) write(IPT,*) "START PLUME_DISCHARGE"
+
+    NULLIFY(STORAGE_ARR)
+
+    ! TRANSLATE TO THE OLD NAME FOR TOTAL NUMBER OF PLUMES
+    NUMPLM_GL = plume_number
+
+    IF (plume_number == 0 ) THEN
+       NUMPLM = 0
+       IF(DBG_SET(DBG_LOG)) write(IPT,*) "! THERE ARE NO PLUMES IN THIS MODEL"
+       ALLOCATE(PLUME_FORCING_COMMENTS(1))
+       PLUME_FORCING_COMMENTS(1) = "THERE ARE NO PLUMES IN T&
+            &HIS MODEL"
+       RETURN
+    END IF
+
+
+    IF (DBG_SET(DBG_SBRIO))THEN
+       WRITE(IPT,*) "Total Number Of Plumes = ",plume_number 
+       WRITE(IPT,*) "PLUME_KIND = "//trim(PLUME_KIND)
+
+       WRITE(IPT,*)"============================="
+       DO I =1,plume_number 
+          write(IPT,*) "Plume number:",I
+          WRITE(IPT,*) "Plume File ="//TRIM(PLUMES(i)%FILE)
+          WRITE(IPT,*) "Plume Name ="//trim(PLUMES(i)%NAME)
+          WRITE(IPT,*) "Plume Location =",PLUMES(i)%LOCATION
+          WRITE(IPT,*)"============================="
+       END DO
+    END IF
+
+    ALLOCATE(PLUME_FORCING_COMMENTS(plume_number + 2))
+    WRITE(CHR,'(I7)')plume_number
+    PLUME_FORCING_COMMENTS(1) = "THERE ARE "//TRIM(adjustl(CHR))//" PLUMES IN THIS MODEL."
+    PLUME_FORCING_COMMENTS(2) = "THE FOLLOWING PLUME NAMES ARE USED:"
+    DO I =1,plume_number
+       PLUME_FORCING_COMMENTS(2+I) = TRIM(PLUMES(i)%NAME)
+    END DO
+
+
+    ! CHECK TO MAKE SURE THE LOCATION IS VALID AND ADD NAMES TO
+    ! COMMENT STRING
+    nfiles = 0
+    NUMPLM = 0
+    DO  I =1,plume_number 
+
+       ! CHECK THE INFLOW LOCATION OF EACH PLUME
+       ! COUNT THE NUMBER THAT BELONG TO EACH PROCESSOR
+          IF(PLUMES(i)%LOCATION > MGL .or. PLUMES(i)%LOCATION < 1)THEN
+             write(chr,'(I7)') PLUMES(i)%LOCATION
+             CALL FATAL_ERROR ("PLUME_DISCHARGE: FOR THE PLUME NAMED: "&
+                  &//trim(PLUMES(i)%NAME),"THE PLUME GRID LOCATION IN&
+                  & THE NAME LIST IS NOT IN THE GLOBAL DOMAIN",&
+                  & "YOU SPECIFIED NODE NUMBER: "//chr)
+          END IF
+
+          ! COUNT THE NUMBER OF PLUMES OWNED BY THIS PROC
+          IF (NLID(PLUMES(I)%LOCATION) .GT. 0) NUMPLM = NUMPLM + 1
+
+       ! COUNT THE NUMBER OF FILES
+       NCF => FIND_FILE(FILEHEAD,TRIM(PLUMES(I)%FILE),FOUND)
+       IF (.NOT.FOUND) CALL FATAL_ERROR &
+            & ("PLUME_DISCHARGE: COULD NOT FIND PLUME FILE OBJECT NAMED: &
+            &"//TRIM(PLUMES(I)%FILE))
+       
+       IF(.NOT. associated(NCF%FTIME)) CALL FATAL_ERROR&
+            &("PLUME FILE DID NOT LOAD PROPERLY",& 
+            & "File name:"//trim(NCF%FNAME),&
+            &"Please check the time format!")
+
+       IF (NCF%FTIME%PREV_STKCNT /= 999) THEN
+          NFILES = NFILES +1
+          NCF%FTIME%PREV_STKCNT = 999
+       END IF
+
+    END DO
+
+
+    ! ALLOCATE THE SPACE FOR THE PLUME FILES AND NULLIFY POINTERS
+    ALLOCATE(PLUME_FORCING(NFILES))
+    DO I =1,NFILES
+       NULLIFY(PLUME_FORCING(I)%NCF)
+       NULLIFY(PLUME_FORCING(I)%FLUX_N)
+       NULLIFY(PLUME_FORCING(I)%FLUX_P)
+       NULLIFY(PLUME_FORCING(I)%VDIST_N)
+       NULLIFY(PLUME_FORCING(I)%VDIST_P)
+       NULLIFY(PLUME_FORCING(I)%TEMP_N)
+       NULLIFY(PLUME_FORCING(I)%TEMP_P)
+       NULLIFY(PLUME_FORCING(I)%SALT_N)
+       NULLIFY(PLUME_FORCING(I)%SALT_P)
+# if defined (FABM)
+       ALLOCATE(PLUME_FORCING(I)%FABM_N(size(model%state_variables)))
+       ALLOCATE(PLUME_FORCING(I)%FABM_P(size(model%state_variables)))
+# endif
+    END DO
+
+
+    ! ALLOCATE THE SPACE FOR THE PLUME DATA
+    ALLOCATE(INODEPLM(NUMPLM))
+    ALLOCATE(VDISTPLM(NUMPLM,KBM1));  VDISTPLM = 0
+    ALLOCATE(FLXPLM(NUMPLM,KBM1));    FLXPLM   = 0.0_SP
+# if defined (FABM)
+    ALLOCATE(FABMPLM(NUMPLM,KBM1,size(model%state_variables))); FABMPLM  = 0.0_SP
+# endif
+    ALLOCATE(TPLM(NUMPLM,KBM1));            TPLM   = 0.0_SP
+    ALLOCATE(SPLM(NUMPLM,KBM1));            SPLM   = 0.0_SP
+
+    FCNT = 0
+    RCNT = 0
+    DO  I =1,plume_number 
+       ! SET MINE TO FALSE
+       MINE = .false. 
+       ! Mine is set true if this plume name belongs
+       ! to this processor
+       ! MAKE THE LOCAL AND GLOBAL INDEX
+
+          IF (NLID(PLUMES(I)%LOCATION) .GT. 0) THEN
+             rcnt = rcnt + 1
+             INODEPLM(rcnt)       = NLID(PLUMES(I)%LOCATION)
+             MINE = .TRUE.
+          END IF
+
+
+       ! NOW PUT THE PLUMES IN THE PLUME_FORCING TYPE
+       NCF => FIND_FILE(FILEHEAD,TRIM(PLUMES(I)%FILE),FOUND)
+
+       IF (NCF%FTIME%PREV_STKCNT == 999) THEN
+          FCNT = FCNT + 1
+          PLUME_FORCING(FCNT)%NCF => NCF
+          NCF%FTIME%PREV_STKCNT = 0
+
+          DIM => FIND_DIM(NCF,'plumes',FOUND)
+          IF(.not.FOUND) CALL FATAL_ERROR &
+               & ("COULD NOT FIND DIMENSION 'plumes'",&
+               & "In the file: "//trim(NCF%FNAME) )
+
+          PLUME_FORCING(FCNT)%PLUMES_IN_FILE=DIM%DIM
+          ALLOCATE(PLUME_FORCING(FCNT)%PLM_FILE2LOC(DIM%DIM))
+          PLUME_FORCING(FCNT)%PLM_FILE2LOC = 0
+
+       END IF
+
+       ! FIGURE OUT WHICH PLUME IT IS WHICH FILE AND SET THE INDEX 
+       DO J = 1, NFILES
+          ! IN THIS FILE FIND THE NAME
+          if (ASSOCIATED(NCF,PLUME_FORCING(J)%NCF)) THEN
+             K=SEARCH_NAME(NCF,PLUMES(I)%NAME)
+
+             ! THIS IS MY PLUME SO SET THE INDEX
+             IF (MINE) PLUME_FORCING(J)%PLM_FILE2LOC(K)=RCNT
+
+          END IF
+       END DO
+
+
+    END DO
+
+    IF (FCNT /= NFILES) CALL FATAL_ERROR&
+         ("PLUME_DISCHARGE: WE LOST A PLUME FILE IN THE MIDDLE OF NOWHERE!")
+
+    IF (RCNT /= NUMPLM) CALL FATAL_ERROR&
+         ("PLUME_DISCHARGE: WE LOST A PLUME IN THE MIDDLE OF NOWHERE!")
+
+
+    DO I = 1, NFILES
+
+       NCF => PLUME_FORCING(I)%NCF
+
+       SELECT CASE (PLUME_KIND)
+       CASE(PRDC)
+	!     CALL CHECK_PLUME_FILE(NCF, PLUME_FORCING(I)%plume_period)
+         WRITE(*,*) "PLUME_KIND NOT SET UP FOR PERIODIC YET"
+		 STOP
+       CASE(VRBL)          
+          CALL CHECK_PLUME_FILE(NCF)
+       CASE DEFAULT
+          CALL FATAL_ERROR("Invalid PLUME_KIND in namelist runfile:",&
+               & " Options are: "//TRIM(PRDC)//" or "//TRIM(VRBL))
+       END SELECT
+
+       DIM => FIND_DIM(NCF,'plumes',FOUND)
+
+       nrs = DIM%dim
+
+       ! GET THE FLUX VARIABLE
+       VAR => FIND_VAR(NCF,'plume_flux',FOUND)
+
+       ALLOCATE(STORAGE_ARR(nrs,KBM1), stat = status)
+       IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN PLUME_DISCHARGE")
+       PLUME_FORCING(I)%FLUX_N => reference_var(var)
+       CALL NC_CONNECT_PVAR(PLUME_FORCING(I)%FLUX_N,STORAGE_ARR)
+       NULLIFY(STORAGE_ARR)
+
+       ALLOCATE(STORAGE_ARR(nrs,KBM1), stat = status)
+       IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN PLUME_DISCHARGE")
+       PLUME_FORCING(I)%FLUX_P => reference_var(var)
+       CALL NC_CONNECT_PVAR(PLUME_FORCING(I)%FLUX_P,STORAGE_ARR)
+       NULLIFY(STORAGE_ARR)
+
+       ! GET THE VERTICAL DISTRIBUTION VARIABLE
+
+       VAR => FIND_VAR(NCF,'plume_vdist',FOUND)
+       ALLOCATE(STORAGE_ARR(nrs,KBM1), stat = status)
+       IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN PLUME_DISCHARGE")
+       PLUME_FORCING(I)%VDIST_N => reference_var(var)
+       CALL NC_CONNECT_PVAR(PLUME_FORCING(I)%VDIST_N,STORAGE_ARR)
+       NULLIFY(STORAGE_ARR)
+
+       ALLOCATE(STORAGE_ARR(nrs,KBM1), stat = status)
+       IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN PLUME_DISCHARGE")
+       PLUME_FORCING(I)%VDIST_P => reference_var(var)
+       CALL NC_CONNECT_PVAR(PLUME_FORCING(I)%VDIST_P,STORAGE_ARR)
+       NULLIFY(STORAGE_ARR)
+
+       ! GET THE TEMPERATURE VARIABLE
+       VAR => FIND_VAR(NCF,'plume_temp',FOUND)
+
+       ALLOCATE(STORAGE_ARR(nrs,KBM1), stat = status)
+       IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN PLUME_DISCHARGE")
+       PLUME_FORCING(I)%TEMP_N => reference_var(var)
+       CALL NC_CONNECT_PVAR(PLUME_FORCING(I)%TEMP_N,STORAGE_ARR)
+       NULLIFY(STORAGE_ARR)
+
+       ALLOCATE(STORAGE_ARR(nrs,KBM1), stat = status)
+       IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN PLUME_DISCHARGE")
+       PLUME_FORCING(I)%TEMP_P => reference_var(var)
+       CALL NC_CONNECT_PVAR(PLUME_FORCING(I)%TEMP_P,STORAGE_ARR)
+       NULLIFY(STORAGE_ARR)
+
+       ! GET THE SALINITY VARIABLE
+       VAR => FIND_VAR(NCF,'plume_salt',FOUND)
+	   
+       ALLOCATE(STORAGE_ARR(nrs,KBM1), stat = status)
+       IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN PLUME_DISCHARGE")
+       PLUME_FORCING(I)%SALT_N => reference_var(var)
+       CALL NC_CONNECT_PVAR(PLUME_FORCING(I)%SALT_N,STORAGE_ARR)
+       NULLIFY(STORAGE_ARR)
+
+       ALLOCATE(STORAGE_ARR(nrs,KBM1), stat = status)
+       IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN PLUME_DISCHARGE")
+       PLUME_FORCING(I)%SALT_P => reference_var(var)
+       CALL NC_CONNECT_PVAR(PLUME_FORCING(I)%SALT_P,STORAGE_ARR)
+       NULLIFY(STORAGE_ARR)
+
+       ! ============= New : 2016, April ===================
+	   ! DON'T KNOW IF IT IS NEEDED FOR PLUME
+       ! Initialize some variables 
+       ! Similar to the hints by Qi and afm 20160216
+       ! PLUME_FORCING(I)%FLUX_N%curr_stkcnt = 0; PLUME_FORCING(I)%FLUX_P%curr_stkcnt = 0
+       ! PLUME_FORCING(I)%TEMP_N%curr_stkcnt = 0; PLUME_FORCING(I)%TEMP_P%curr_stkcnt = 0
+       ! PLUME_FORCING(I)%SALT_N%curr_stkcnt = 0; PLUME_FORCING(I)%SALT_P%curr_stkcnt = 0 
+       ! ==================== end new ======================================
+
+#if defined (FABM)
+
+       IF(FABM_MODEL)THEN
+
+         DO IFABM=1,size(model%state_variables)
+         ! GET THE BIOLOGICAL CONCENTRATION FOR CURRENT PELAGIC STATE VARIABLE
+           VAR => FIND_VAR(NCF,TRIM(model%state_variables(IFABM)%name),FOUND)
+           IF(FOUND) THEN
+             ALLOCATE(STORAGE_ARR(nrs,KBM1), stat = status)
+             IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN PLUME_DISCHARGE")
+             PLUME_FORCING(I)%FABM_N(IFABM)%P => reference_var(var)
+             CALL NC_CONNECT_PVAR(PLUME_FORCING(I)%FABM_N(IFABM)%P,STORAGE_ARR)
+             NULLIFY(STORAGE_ARR)
+
+             ALLOCATE(STORAGE_ARR(nrs,KBM1), stat = status)
+             IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN PLUME_DISCHARGE")
+             PLUME_FORCING(I)%FABM_P(IFABM)%P => reference_var(var)
+             CALL NC_CONNECT_PVAR(PLUME_FORCING(I)%FABM_P(IFABM)%P,STORAGE_ARR)
+             NULLIFY(STORAGE_ARR)
+           ENDIF
+
+         END DO
+       END IF
+#endif
+
+    END DO
+
+    IF(DBG_SET(DBG_LOG)) THEN
+       WRITE(IPT,*)"!"
+       WRITE(IPT,*)"!  PLUME FORCING ON"
+       WRITE(IPT,*)'!  GLOBAL NUMBER OF PLUMES :',plume_number
+       WRITE(IPT,*)'!  NUMBER OF PLUME FILES   :', nfiles
+    END IF
+
+    IF(DBG_SET(DBG_SCL)) THEN
+       WRITE(IPT,*)"/////////=============================///////////"
+       WRITE(IPT,*)"   PRINTING PLUME FORCING DETAILS"
+
+       WRITE(IPT,*)"  LOCAL NUMBER OF PLUMES  : ", numplm
+
+       WRITE(IPT,*)"============================="       
+       DO I = 1,nfiles
+          WRITE(IPT,*)" FILE NAME: "//TRIM(PLUME_FORCING(I)%NCF%FNAME)
+          WRITE(IPT,*)" NUMBER IN FILE=",PLUME_FORCING(I)%PLUMES_IN_FILE
+          WRITE(IPT,*)" PLM_FILE2LOC = ",PLUME_FORCING(I)%PLM_FILE2LOC
+          WRITE(IPT,*)"============================="
+       END DO
+
+       WRITE(IPT,*)"/////////=============================///////////"
+    END IF
+
+    IF(DBG_SET(DBG_SBR)) write(IPT,*) "END PLUME_DISCHARGE"
+
+
+  END SUBROUTINE PLUME_DISCHARGE
+# endif 
+
+  !================================================================
+  !================================================================  
+  SUBROUTINE CHECK_PLUME_FILE(NCF,PERIOD)
+    ! CALL FATAL_ERROR IF THERE IS ANYTHING WRONG WITH THE FILE
+    IMPLICIT NONE
+    TYPE(NCFILE), POINTER ::NCF
+    TYPE(TIME),OPTIONAL :: PERIOD
+    ! SOME NC POINTERS
+    TYPE(NCATT), POINTER :: ATT
+    TYPE(NCDIM), POINTER :: DIM
+    TYPE(NCVAR), POINTER :: VAR
+
+    TYPE(TIME) :: fSTART, fEND
+    INTEGER :: NTIMES,NS
+    LOGICAL FOUND
+
+    IF(.NOT. ASSOCIATED(NCF)) CALL FATAL_ERROR &
+         & ("THE PLUME FILE OBJECT PASSED TO 'check_plume_file' IS NOT ASSOCIATED")
+
+    ! CHECK DIMENSIONS
+    DIM => FIND_DIM(NCF,'time',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PLUME FILE:"//TRIM(NCF%FNAME),"IS MISSING THE 'time' DIMENSION")
+
+    nTIMES = DIM%dim
+
+    DIM => FIND_DIM(NCF,'namelen',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PLUME FILE:"//TRIM(NCF%FNAME),"IS MISSING THE 'namelen' DIMENSION")
+
+    DIM => FIND_DIM(NCF,'plumes',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE RIVER FILE:"//TRIM(NCF%FNAME),"IS MISSING THE 'plumes' DIMENSION")
+
+    ! CHECK VARIABLES AND THEIR ATTS
+    IF(.NOT. ASSOCIATED(NCF%FTIME)) CALL FATAL_ERROR &
+         & ('THE PLUME FILE '//TRIM(NCF%FNAME),&
+         'DOES NOT HAVE A RECONGIZED TIME VARIABLE')
+
+    IF(PRESENT(PERIOD)) THEN
+
+       ! CHECK START AND END TIME FOR THE FILE:
+       FSTART = GET_FILE_TIME(NCF,1)
+       IF(ZEROTIME /= FSTART) THEN
+          CALL PRINT_TIME(FSTART,IPT,"Plume Data Start")
+          CALL FATAL_ERROR &
+               & ("Date of the first plume data point must be 0.0 for periodic forcoing mode:",&
+               & "The Plume File: "//TRIM(NCF%FNAME)//'; has a bad start date.')
+       END IF
+       
+       PERIOD = GET_FILE_TIME(NCF,NTIMES)
+       IF(PERIOD .LE. zerotime) THEN
+          CALL PRINT_REAL_TIME(PERIOD,IPT,"Plume Data End")
+          
+          CALL FATAL_ERROR &
+               & ("Date of the last plume data point must be greater than or equal to zero for periodic forcing mode:",&
+               & "The River File: "//TRIM(NCF%FNAME)//'; has a bad end date.')
+       END IF
+
+
+    ELSE
+       ! CHECK START AND END TIME FOR THE FILE:
+       FSTART = GET_FILE_TIME(NCF,1)
+       IF(FSTART > StartTIME) THEN
+          CALL PRINT_REAL_TIME(StartTime,IPT,"Model Start")
+          CALL PRINT_REAL_TIME(FSTART,IPT,"Plume Data Start")
+          CALL FATAL_ERROR &
+               & ("Date of the first plume data point must be less than or equal to the model start date:",&
+               & "The plume File: "//TRIM(NCF%FNAME)//'; has a bad start date.')
+       END IF
+       
+       FEND = GET_FILE_TIME(NCF,NTIMES)
+       IF(FEND < EndTime) THEN
+          CALL PRINT_REAL_TIME(EndTime,IPT,"Model End")
+          CALL PRINT_REAL_TIME(FEND,IPT,"Plume Data End")
+          
+          CALL FATAL_ERROR &
+               & ("Date of the last plume data point must be greater than or equal to the model end date:",&
+               & "The Plume File: "//TRIM(NCF%FNAME)//'; has a bad end date.')
+       END IF
+    END IF
+
+    VAR => FIND_VAR(NCF,'plume_names',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PLUME FILE:"//TRIM(NCF%FNAME),"IS MISSING THE 'plume_names' VARIABLE")
+    ! HAS NO ATTRIBUTES
+
+    VAR => FIND_VAR(NCF,'plume_flux',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PLUME FILE:"//TRIM(NCF%FNAME),"IS MISSING THE 'plume_flux' VARIABLE")
+
+    ATT => FIND_ATT(VAR,'units',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PLUME FILE:"//TRIM(NCF%FNAME),"THE VARIABLE: "&
+         &//TRIM(VAR%VARNAME), "IS MISSING THE ATTRIBUTE 'units'")
+
+    IF(TRIM(ATT%CHR(1)) /= "m^3s^-1")CALL FATAL_ERROR &
+         & ("THE PLUME FILE:"//TRIM(NCF%FNAME),"THE VARIABLE: "&
+         &//TRIM(VAR%VARNAME), "THE ATTRIBUTE 'units' IS INCORRECT: EXPE&
+         &CTING 'm^3s^-1'")
+
+    VAR => FIND_VAR(NCF,'plume_temp',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PLUME FILE:"//TRIM(NCF%FNAME),"IS MISSING THE 'plume_temp' VARIABLE")
+
+    ATT => FIND_ATT(VAR,'units',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PLUME FILE:"//TRIM(NCF%FNAME),"THE VARIABLE: "&
+         &//TRIM(VAR%VARNAME), "IS MISSING THE ATTRIBUTE 'units'")
+
+    IF(TRIM(ATT%CHR(1)) /= "Celsius")CALL FATAL_ERROR &
+         & ("THE PLUME FILE:"//TRIM(NCF%FNAME),"THE VARIABLE: "&
+         &//TRIM(VAR%VARNAME), "THE ATTRIBUTE 'units' IS INCORRECT: EXPE&
+         &CTING 'Celsius'")
+
+    VAR => FIND_VAR(NCF,'plume_salt',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PLUME FILE:"//TRIM(NCF%FNAME),"IS MISSING THE 'plume_salt' VARIABLE")
+
+    ATT => FIND_ATT(VAR,'units',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PLUME FILE:"//TRIM(NCF%FNAME),"THE VARIABLE: "&
+         &//TRIM(VAR%VARNAME), "IS MISSING THE ATTRIBUTE 'units'")
+
+    IF(TRIM(ATT%CHR(1)) /= "PSU")CALL FATAL_ERROR &
+         & ("THE PLUME FILE:"//TRIM(NCF%FNAME),"THE VARIABLE: "&
+         &//TRIM(VAR%VARNAME), "THE ATTRIBUTE 'units' IS INCORRECT: EXPE&
+         &CTING 'PSU'")
+		 
+  END SUBROUTINE CHECK_PLUME_FILE
   !================================================================
   !================================================================
 
@@ -2058,8 +2556,8 @@ CONTAINS
        NULLIFY(RIVER_FORCING(I)%BIO20_P)
 # endif         
 # if defined (FABM)
-       ALLOCATE(RIVER_FORCING(I)%FABM_N(size(model%interior_state_variables)))
-       ALLOCATE(RIVER_FORCING(I)%FABM_P(size(model%interior_state_variables)))
+       ALLOCATE(RIVER_FORCING(I)%FABM_N(size(model%state_variables)))
+       ALLOCATE(RIVER_FORCING(I)%FABM_P(size(model%state_variables)))
 # endif
     END DO
 
@@ -2083,7 +2581,7 @@ CONTAINS
     END IF
 # endif
 # if defined (FABM)
-    ALLOCATE(FABMDIS(NUMQBC,size(model%interior_state_variables))); FABMDIS  = 0.0_SP
+    ALLOCATE(FABMDIS(NUMQBC,size(model%state_variables))); FABMDIS  = 0.0_SP
 # endif
     ALLOCATE(TDIS(NUMQBC));         TDIS   = 0.0_SP
     ALLOCATE(SDIS(NUMQBC));         SDIS   = 0.0_SP
@@ -2258,10 +2756,16 @@ CONTAINS
        CALL NC_CONNECT_PVAR(RIVER_FORCING(I)%SALT_P,STORAGE_VEC)
        NULLIFY(STORAGE_VEC)
 
-       ! afm 20160516 & EJA 20160921
+       ! ============= New : 2016, April ===================
+       ! Initialize some variables 
+       ! Similar to the hints by Qi and afm 20160216
        RIVER_FORCING(I)%FLUX_N%curr_stkcnt = 0; RIVER_FORCING(I)%FLUX_P%curr_stkcnt = 0
        RIVER_FORCING(I)%TEMP_N%curr_stkcnt = 0; RIVER_FORCING(I)%TEMP_P%curr_stkcnt = 0
        RIVER_FORCING(I)%SALT_N%curr_stkcnt = 0; RIVER_FORCING(I)%SALT_P%curr_stkcnt = 0 
+       ! ==================== end new ======================================
+
+
+
 
 # if defined (WATER_QUALITY)
        ! GET THE WATER QUALITY VARIABLE
@@ -2376,8 +2880,13 @@ CONTAINS
        RIVER_FORCING(I)%WQM8_P => reference_var(var)
        CALL NC_CONNECT_PVAR(RIVER_FORCING(I)%WQM8_P,STORAGE_VEC)
        NULLIFY(STORAGE_VEC)
-
-       ! afm 20160516 & EJA 20160921
+       
+      ! ---------- new: 2016 , april, after Hint by Qi and ayumi.fujisaki@noaa.gov------
+      ! Initialize some variables 
+      ! afm 20150914
+      ! Need initialization. Otherwise, random values are asigned
+      ! and cause a hanging problem of MPI job in UPDATE_VAR_BRACKET 
+      ! This problem reported with Intel15.0.3. 
        river_forcing(i)%wqm1_n%curr_stkcnt = 0; river_forcing(i)%wqm1_p%curr_stkcnt = 0
        river_forcing(i)%wqm2_n%curr_stkcnt = 0; river_forcing(i)%wqm2_p%curr_stkcnt = 0
        river_forcing(i)%wqm3_n%curr_stkcnt = 0; river_forcing(i)%wqm3_p%curr_stkcnt = 0
@@ -2386,6 +2895,7 @@ CONTAINS
        river_forcing(i)%wqm6_n%curr_stkcnt = 0; river_forcing(i)%wqm6_p%curr_stkcnt = 0
        river_forcing(i)%wqm7_n%curr_stkcnt = 0; river_forcing(i)%wqm7_p%curr_stkcnt = 0
        river_forcing(i)%wqm8_n%curr_stkcnt = 0; river_forcing(i)%wqm8_p%curr_stkcnt = 0
+      ! ----------------------------------------------------------------------------------
 
        
 # endif
@@ -2611,7 +3121,7 @@ CONTAINS
        ENDIF
 
 
-       ! ---------- new: 2016 , april, Karsten Lettmann after Hint by Qi and ayumi.fujisaki@noaa.gov------
+       ! ---------- new: 2016 , april, after Hint by Qi and ayumi.fujisaki@noaa.gov------
        ! Initialize some variables 
        ! afm 20160216
        ! Need initialization. Otherwise, random values are asigned
@@ -3083,7 +3593,7 @@ CONTAINS
        ENDIF
 
 
-       ! ---------- new: 2016 , april, Karsten Lettmann after Hint by Qi and ayumi.fujisaki@noaa.gov------
+       ! ---------- new: 2016 , april, after Hint by Qi and ayumi.fujisaki@noaa.gov------
        ! Initialize some variables 
        ! afm 20160216
        ! Need initialization. Otherwise, random values are asigned
@@ -3160,9 +3670,9 @@ CONTAINS
 
        IF(FABM_MODEL)THEN
 
-         DO IFABM=1,size(model%interior_state_variables)
+         DO IFABM=1,size(model%state_variables)
          ! GET THE BIOLOGICAL CONCENTRATION FOR CURRENT PELAGIC STATE VARIABLE
-           VAR => FIND_VAR(NCF,TRIM(model%interior_state_variables(IFABM)%name),FOUND)
+           VAR => FIND_VAR(NCF,TRIM(model%state_variables(IFABM)%name),FOUND)
            IF(FOUND) THEN
              ALLOCATE(STORAGE_VEC(nrs), stat = status)
              IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN RIVER_DISCHARGE")
@@ -3235,7 +3745,7 @@ CONTAINS
     LOGICAL FOUND
 
     IF (DBG_SET(DBG_IO)) THEN
-       WRITE(IPT,*)"SEARCH_NAME (RIVERS)"
+       WRITE(IPT,*)"SEARCH_NAME (RIVERS OR PLUMES)"
        WRITE(IPT,*)"============================="
        write(IPT,*)"LOOKING FOR: '"//TRIM(NAME)//"'"
        WRITE(IPT,*)"=========="
@@ -3245,9 +3755,12 @@ CONTAINS
 
     ! FIND THE RIVER NAME IN THE FILE
     DIM => FIND_DIM(NCF,'rivers',FOUND)
+	DIM => FIND_DIM(NCF,'plumes',FOUND)   ! added by Qin, test 
+	
     rvrs_in_file = DIM%DIM
 
     VAR => FIND_VAR(NCF,'river_names',found)
+    VAR => FIND_VAR(NCF,'plume_names',found)  ! added by Qin, test 
 
     ! ATTEMPT TO ONLY READ NAMES LIST ONCE
     IF(.NOT. ASSOCIATED(VAR%VEC_CHR)) THEN
@@ -4090,13 +4603,17 @@ CONTAINS
             & TRIM(ATT%CHR(1)))
     END SELECT
 
-    ! afm 20151112 & EJA 20160921
+
+    IF(DBG_SET(DBG_SBR)) write(IPT,*) "END OBC_TEMPERATURE"
+
+    ! ---------- new: 2016 , april, after Hint by Qi -------------------------
+    ! Initialize some variables 
+    ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
     ! and cause a hanging problem of MPI job in UPDATE_VAR_BRACKET 
     ! This problem reported with Intel15.0.3.     
     OBC_T_N%curr_stkcnt = 0; OBC_T_P%curr_stkcnt = 0
-
-    IF(DBG_SET(DBG_SBR)) write(IPT,*) "END OBC_TEMPERATURE"
+    ! ---------- end new ---------------------------------------
 
   END SUBROUTINE OBC_TEMPERATURE
   !================================================================
@@ -4293,12 +4810,15 @@ CONTAINS
             &"THE GLOBAL ATTRIBUTE 'type' RETURNED UNKNOWN TYPE:",&
             & TRIM(ATT%CHR(1)))
     END SELECT
-
-    ! afm 20150914 & EJA 20160921
+    ! ---------- new: 2016 , april, after Hint by Qi -------------------------
+    ! Initialize some variables 
+    ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
     ! and cause a hanging problem of MPI job in UPDATE_VAR_BRACKET 
     ! This problem reported with Intel15.0.3. 
     OBC_S_N%curr_stkcnt = 0; OBC_S_P%curr_stkcnt = 0
+    ! -------- end new ---------------------------------------------
+
 
     IF(DBG_SET(DBG_SBR)) write(IPT,*) "END OBC_SALINITY"
 
@@ -4718,7 +5238,7 @@ CONTAINS
     END SELECT
 
 
-    ! ---------- new: 2016 , april, Karsten Lettmann after Hint by Qi and ayumi.fujisaki@noaa.gov------
+    ! ---------- new: 2016 , april, after Hint by Qi and ayumi.fujisaki@noaa.gov------
     ! Initialize some variables 
     ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
@@ -4733,6 +5253,9 @@ CONTAINS
     OBC_W_P7%curr_stkcnt = 0; OBC_W_N7%curr_stkcnt = 0
     OBC_W_P8%curr_stkcnt = 0; OBC_W_N8%curr_stkcnt = 0
     ! -------- end new ----------------------------------------------------------------
+
+
+
 
     IF(DBG_SET(DBG_SBR)) write(IPT,*) "END OBC_WQM"
 
@@ -5570,7 +6093,7 @@ CONTAINS
     END SELECT
 
 
-    ! ---------- new: 2016 , april, Karsten Lettmann after Hint by Qi and ayumi.fujisaki@noaa.gov------
+    ! ---------- new: 2016 , april, after Hint by Qi and ayumi.fujisaki@noaa.gov------
     ! Initialize some variables 
     ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
@@ -5629,7 +6152,7 @@ CONTAINS
     IF(DBG_SET(DBG_SBR)) write(IPT,*) "START OBC_FABM"
 
     ! Initialize field with variable-specific nudging flags (NB must be done even if .not. FABM_OBC_PRESCRIBED!)
-    ALLOCATE(FABM_OBC_PRESCRIBED(size(model%interior_state_variables)))
+    ALLOCATE(FABM_OBC_PRESCRIBED(size(model%state_variables)))
     FABM_OBC_PRESCRIBED=.FALSE.
 
     IF (.NOT. OBC_FABM_NUDGING) THEN
@@ -5759,10 +6282,10 @@ CONTAINS
             & "FILE NAME: "//TRIM(OBC_FABM_FILE),&
             &"THE MODEL RUN ENDS AFTER THE FABM TIME SERIES")
 
-       ALLOCATE(OBC_FABM_N(size(model%interior_state_variables)))
-       ALLOCATE(OBC_FABM_P(size(model%interior_state_variables)))
-       DO IFABM=1,size(model%interior_state_variables)
-       VAR => FIND_VAR(OBC_F_FILE,model%interior_state_variables(IFABM)%name,FOUND)
+       ALLOCATE(OBC_FABM_N(size(model%state_variables)))
+       ALLOCATE(OBC_FABM_P(size(model%state_variables)))
+       DO IFABM=1,size(model%state_variables)
+       VAR => FIND_VAR(OBC_F_FILE,model%state_variables(IFABM)%name,FOUND)
        IF(FOUND) THEN
           ! TODO: report which variables have OBC
           FABM_OBC_PRESCRIBED(IFABM)=.TRUE.
@@ -5770,13 +6293,13 @@ CONTAINS
        IF(.not. FOUND) CALL FATAL_ERROR &
             & ("IN OPEN BOUNDARY CONDITION FABM NUDGING FILE OBJECT",&
             & "FILE NAME: "//TRIM(OBC_FABM_FILE),&
-            &"COULD NOT FIND "//trim(model%interior_state_variables(IFABM)%name)//" VARIABLE'S ATTRIBUTE 'units'")
+            &"COULD NOT FIND "//trim(model%state_variables(IFABM)%name)//" VARIABLE'S ATTRIBUTE 'units'")
 
-!       if(TRIM(ATT%CHR(1)) .NE. TRIM(model%interior_state_variables(IFABM)%units))  &
+!       if(TRIM(ATT%CHR(1)) .NE. TRIM(model%state_variables(IFABM)%units))  &
 !            & CALL FATAL_ERROR &
 !            & ("IN OPEN BOUNDARY CONDITION FABM NUDGING FILE OBJECT",&
-!            &//trim(model%interior_state_variables(IFABM)%name)//" VARIABLE ATTRIBUTE 'units' SHOULD BE " ,&
-!            &//TRIM(model%interior_state_variables(IFABM)%units))
+!            &//trim(model%state_variables(IFABM)%name)//" VARIABLE ATTRIBUTE 'units' SHOULD BE " ,&
+!            &//TRIM(model%state_variables(IFABM)%units))
 
        ! MAKE SPACE FOR THE DATA FROM THE FILE
        ALLOCATE(STORAGE_ARR(IOBCN,KBM1), stat = status)
@@ -6178,7 +6701,7 @@ CONTAINS
   END SUBROUTINE SET_FILE_INTERP_BILINEAR
   !================================================================
   !================================================================
-# if !defined (HEATING_CALCULATED) && !defined (HEATING_SOLAR)
+# if !defined (HEATING_CALCULATED) && !defined (HEATING_CALCULATED_GL) && !defined (HEATING_SOLAR)
   SUBROUTINE SURFACE_HEATING
     IMPLICIT NONE
     ! SOME NC POINTERS
@@ -6578,7 +7101,9 @@ CONTAINS
     END SELECT
     !==================================================================
 
-    ! afm 20151112 & EJA 20160921
+    ! ---------- new: 2016 , april, after Hint by Qi -------------------------
+    ! Initialize some variables 
+    ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
     ! and cause a hanging problem of MPI job in UPDATE_VAR_BRACKET 
     ! This problem reported with Intel15.0.3. 
@@ -6586,13 +7111,14 @@ CONTAINS
     heat_net_p%curr_stkcnt=0
     heat_swv_n%curr_stkcnt=0
     heat_swv_p%curr_stkcnt=0
+    ! -------- end new ----------------------------------------------
 
     IF(DBG_SET(DBG_SBR)) write(IPT,*) "END SURFACE_HEATING"
   END SUBROUTINE SURFACE_HEATING
 # endif
   !================================================================
   !================================================================
-# if defined (HEATING_CALCULATED)
+# if defined (HEATING_CALCULATED) || (HEATING_CALCULATED_GL)
   SUBROUTINE SURFACE_HEATING_CALCULATED
     USE MOD_HEATFLUX
     IMPLICIT NONE
@@ -6653,16 +7179,6 @@ CONTAINS
 #  endif
    DEALLOCATE(CORRG)
    
-   IF(TRIM(COARE_VERSION) == 'COARE40VN')THEN
-     ALLOCATE(RAIN(0:MT)) ; RAIN = 0.0_SP
-     ALLOCATE(CP40(0:MT)) ; CP40 = 0.0_SP
-     ALLOCATE(SIGH(0:MT)) ; SIGH = 0.0_SP
-     ALLOCATE(ZI40(0:MT)) ; ZI40 = 0.0_SP
-   END IF   
-   
-   IF(HEATING_FRESHWATER)THEN
-     ALLOCATE(USRCOARE(0:MT)) ; USRCOARE = 0.0_SP
-   END IF  
 !----------------------------REPORT--------------------------------------------!
    IF(MSR)WRITE(IPT,*)'!'
    IF(MSR)WRITE(IPT,*)'!            SETTING UP PRESCRIBED BOUNDARY CONDITIONS  '
@@ -7278,7 +7794,9 @@ CONTAINS
     END SELECT
     !==================================================================
 
-    ! afm 20151112 & EJA 20160921
+ 
+    ! ========== New: Karsten Lettmann, 2016, march from Qi =============
+    ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
     ! and cause a hanging problem of MPI job in UPDATE_VAR_BRACKET 
     ! This problem reported with Intel15.0.3. 
@@ -7291,6 +7809,8 @@ CONTAINS
     ice_cov_n%curr_stkcnt   = 0;ice_cov_p%curr_stkcnt   = 0
     ice_tik_n%curr_stkcnt   = 0;ice_tik_p%curr_stkcnt   = 0
 # endif
+    ! =========== end New ================================================
+
 
     IF(DBG_SET(DBG_SBR)) write(IPT,*) "END SURFACE_HEATING_CALCULATED"
   END SUBROUTINE SURFACE_HEATING_CALCULATED
@@ -7717,13 +8237,15 @@ CONTAINS
     END SELECT
     !==================================================================
 
-    ! afm 20151112 & EJA 20160921
+    ! ========== New: Karsten Lettmann, 2016, march from Qi =============
+    ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
     ! and cause a hanging problem of MPI job in UPDATE_VAR_BRACKET 
     ! This problem reported with Intel15.0.3. 
     t_air_n%curr_stkcnt = 0;t_air_p%curr_stkcnt = 0
     tdew_n%curr_stkcnt  = 0;tdew_p%curr_stkcnt  = 0
     ccov_n%curr_stkcnt  = 0;ccov_p%curr_stkcnt  = 0
+    ! ====================== end new ===========================
 
     IF(DBG_SET(DBG_SBR)) write(IPT,*) "END SURFACE_HEATING_SOLAR"
   END SUBROUTINE SURFACE_HEATING_SOLAR
@@ -8045,15 +8567,11 @@ CONTAINS
 
        ! Surface Air Temperature DATA
        VAR => FIND_VAR(ICE_FILE,"SAT",FOUND)
-!       VAR => FIND_VAR(ICE_FILE,"T2",FOUND)
-! afm 20150930 & EJA 20160921
-       IF(.not. FOUND) VAR => FIND_VAR(ICE_FILE,"air_temperature",FOUND)
-       IF(.not. FOUND) VAR => FIND_VAR(ICE_FILE,"T2",FOUND)
-
+       VAR => FIND_VAR(ICE_FILE,"T2",FOUND)
        IF(.not. FOUND) CALL FATAL_ERROR &
             & ("IN ICE FORCING BOUNDARY CONDITION FILE OBJECT",&
             & "FILE NAME: "//TRIM(ICE_FORCING_FILE),&
-            & "COULD NOT FIND VARIABLE 'T2','air_temperature' or 'SAT'")
+            & "COULD NOT FIND VARIABLE 'T2' of 'SAT'")
 
        ! MAKE SPACE FOR THE DATA FROM THE FILE
        ALLOCATE(STORAGE_ARR(lons,lats), stat = status)
@@ -8084,13 +8602,11 @@ CONTAINS
 
        ! Specific Humidity DATA
        VAR => FIND_VAR(ICE_FILE,"SPQ",FOUND)
-!       VAR => FIND_VAR(ICE_FILE,"Q2",FOUND)
-! afm 20160513 & EJA 20160921
-       IF(.not. FOUND) VAR => FIND_VAR(ICE_FILE,"Q2",FOUND)
+       VAR => FIND_VAR(ICE_FILE,"Q2",FOUND)
        IF(.not. FOUND) CALL FATAL_ERROR &
             & ("IN ICE FORCING BOUNDARY CONDITION FILE OBJECT",&
             & "FILE NAME: "//TRIM(ICE_FORCING_FILE),&
-            & "COULD NOT FIND VARIABLE 'Q2' or 'SPQ'")
+            & "COULD NOT FIND VARIABLE 'Q2' of 'SPQ'")
 
        ! MAKE SPACE FOR THE DATA FROM THE FILE
        ALLOCATE(STORAGE_ARR(lons,lats), stat = status)
@@ -8184,11 +8700,6 @@ CONTAINS
 
        ! SHORT WAVE RADIATION DATA
        !IF(ASSOCIATED(ICE_FILE,HEAT_FILE)) THEN
-# if !defined (ICE_FRESHWATER)
-! afm 20151112 &  & EJA 20160921
-! commented out for Solar ----------
-! With SOLAR, use SOLAR-derived shortwave
-! Without SOLAR, use shortwave from forcing data  
        VAR => FIND_VAR(HEAT_FILE,"short_wave",FOUND)
        IF( FOUND ) THEN
           ! USE THE SAME MEMORY USED FOR OCEAN MODEL HEAT FLUX
@@ -8226,17 +8737,13 @@ CONTAINS
        END IF
 
 
-# endif
-
        ! Surface Air Temperature DATA
        VAR => FIND_VAR(ICE_FILE,"SAT",FOUND)
-! afm 20151112 & EJA 20160921
-       IF(.not. FOUND) VAR => FIND_VAR(ICE_FILE,"air_temperature",FOUND)
        IF(.not. FOUND) VAR => FIND_VAR(ICE_FILE,"T2",FOUND)
        IF(.not. FOUND) CALL FATAL_ERROR &
             & ("IN ICE FORCING BOUNDARY CONDITION FILE OBJECT",&
             & "FILE NAME: "//TRIM(ICE_FORCING_FILE),&
-            & "COULD NOT FIND VARIABLE 'T2','air_temperature' or 'SAT'")
+            & "COULD NOT FIND VARIABLE 'T2' or 'SAT'")
 
        ! MAKE SPACE FOR THE DATA FROM THE FILE
        ICE_SAT_N => reference_var(var)
@@ -8307,17 +8814,18 @@ CONTAINS
     END SELECT
     !==================================================================
 
-    ! afm 20151112 & EJA 20160921
+
+    ! ---------- new: 2016 , april, after Hint by Qi -------------------------
+    ! Initialize some variables 
+    ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
     ! and cause a hanging problem of MPI job in UPDATE_VAR_BRACKET 
     ! This problem reported with Intel15.0.3. 
-! afm 20180717
-# if !defined (ICE_FRESHWATER)
     ice_swv_n%curr_stkcnt   = 0;ice_swv_p%curr_stkcnt   = 0
-# endif
     ice_sat_n%curr_stkcnt   = 0;ice_sat_p%curr_stkcnt   = 0
     ice_spq_n%curr_stkcnt   = 0;ice_spq_p%curr_stkcnt   = 0
     ice_cld_n%curr_stkcnt   = 0;ice_cld_p%curr_stkcnt   = 0
+    ! --------- end new --------------------------------------------
 
     IF(DBG_SET(DBG_SBR)) write(IPT,*) "END ICE MODEL FORCING"
   END SUBROUTINE ICE_MODEL_FORCING
@@ -8783,7 +9291,7 @@ CONTAINS
     !==================================================================
 
 
-    ! ---------- new: 2016 , april, Karsten Lettmann after Hint by Qi and ayumi.fujisaki@noaa.gov------
+    ! ---------- new: 2016 , april, after Hint by Qi and ayumi.fujisaki@noaa.gov------
     ! Initialize some variables 
     ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
@@ -9346,12 +9854,15 @@ CONTAINS
     END SELECT
 !==============================================================
 
-    ! afm 20151112 & EJA 20160921
+    ! ---------- new: 2016 , april, after Hint by Qi -------------------------
+    ! Initialize some variables 
+    ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
     ! and cause a hanging problem of MPI job in UPDATE_VAR_BRACKET 
     ! This problem reported with Intel15.0.3. 
     winds_strx_n%curr_stkcnt = 0; winds_strx_p%curr_stkcnt = 0
     winds_stry_n%curr_stkcnt = 0; winds_stry_p%curr_stkcnt = 0
+    ! -------- end new ---------------------------------------------
 
     IF(DBG_SET(DBG_SBR)) write(IPT,*) "END SURFACE_WINDSTRESS"
   END SUBROUTINE SURFACE_WINDSTRESS
@@ -9701,76 +10212,29 @@ CONTAINS
        NULLIFY(STORAGE_INT)
 
 #endif
-       IF (OBC_ON) THEN 
-! UARD_OBCN OF OFFLINE UARD_OBCN
-          VAR => FIND_VAR(FABM_FILE,"UARD_OBCN",FOUND)
-          IF(.not. FOUND) VAR => FIND_VAR(FABM_FILE,"UARD_OBCN",FOUND)
-          IF(.not. FOUND) CALL FATAL_ERROR &
-               & ("IN OFFLINE FABM HYDRAULIC FORCING FILE OBJECT",&
-               & "FILE NAME: "//TRIM(OFFLINE_FABM_FILE),&
-               & "COULD NOT FIND VARIABLE 'UARD_OBCN' or 'uard_obcn'")
-
-          ! MAKE SPACE FOR THE DATA FROM THE FILE
-          FABM_UA_N => reference_var(var)
-          ALLOCATE(STORAGE_VEC(IOBCN), stat = status)
-          IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN OFFLINE FABM FORCING")
-          CALL NC_CONNECT_PVAR(FABM_UA_N,STORAGE_VEC)
-          NULLIFY(STORAGE_VEC)
-
-
-          ! MAKE SPACE FOR THE DATA FROM THE FILE
-          FABM_UA_P => reference_var(var)
-          ALLOCATE(STORAGE_VEC(IOBCN), stat = status)
-          IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN OFFLINE FABM FORCING")
-          CALL NC_CONNECT_PVAR(FABM_UA_P,STORAGE_VEC)
-          NULLIFY(STORAGE_VEC)
-
-       END IF
-       ! DTFA OF OFFLINE DTFA
-       VAR => FIND_VAR(FABM_FILE,"DTFA",FOUND)
-       IF(.not. FOUND) VAR => FIND_VAR(FABM_FILE,"DTFA",FOUND)
+       ! UARD_OBCN OF OFFLINE UARD_OBCN
+       VAR => FIND_VAR(FABM_FILE,"UARD_OBCN",FOUND)
+       IF(.not. FOUND) VAR => FIND_VAR(FABM_FILE,"UARD_OBCN",FOUND)
        IF(.not. FOUND) CALL FATAL_ERROR &
             & ("IN OFFLINE FABM HYDRAULIC FORCING FILE OBJECT",&
             & "FILE NAME: "//TRIM(OFFLINE_FABM_FILE),&
-            & "COULD NOT FIND VARIABLE 'DTFA' or 'dtfa'")
+            & "COULD NOT FIND VARIABLE 'UARD_OBCN' or 'uard_obcn'")
 
 
        ! MAKE SPACE FOR THE DATA FROM THE FILE
-       FABM_DTFA_N => reference_var(var)
-       ALLOCATE(STORAGE_VEC(0:MT), stat = status)
+       FABM_UA_N => reference_var(var)
+       ALLOCATE(STORAGE_VEC(IOBCN), stat = status)
        IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN OFFLINE FABM FORCING")
-       CALL NC_CONNECT_PVAR(FABM_DTFA_N,STORAGE_VEC)
+       CALL NC_CONNECT_PVAR(FABM_UA_N,STORAGE_VEC)
        NULLIFY(STORAGE_VEC)
 
 
        ! MAKE SPACE FOR THE DATA FROM THE FILE
-       FABM_DTFA_P => reference_var(var)
-       ALLOCATE(STORAGE_VEC(0:MT), stat = status)
+       FABM_UA_P => reference_var(var)
+       ALLOCATE(STORAGE_VEC(IOBCN), stat = status)
        IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN OFFLINE FABM FORCING")
-       CALL NC_CONNECT_PVAR(FABM_DTFA_P,STORAGE_VEC)
+       CALL NC_CONNECT_PVAR(FABM_UA_P,STORAGE_VEC)
        NULLIFY(STORAGE_VEC)
-
-
-      ! ---------- new: 2020 , june, R torres
-      ! Initialize some variables 
-      ! Need initialization. Otherwise, random values are asigned
-      ! and cause a hanging problem of MPI job in UPDATE_VAR_BRACKET 
-      ! This problem reported with Intel15.0.3. 
-      FABM_U_P%CURR_STKCNT = 0; FABM_U_N%CURR_STKCNT = 0
-      FABM_V_P%CURR_STKCNT = 0; FABM_V_N%CURR_STKCNT = 0
-      FABM_W_P%CURR_STKCNT = 0; FABM_W_N%CURR_STKCNT = 0
-      FABM_S1_P%CURR_STKCNT = 0; FABM_S1_N%CURR_STKCNT = 0
-      FABM_EL_P%CURR_STKCNT = 0; FABM_EL_N%CURR_STKCNT = 0
-      FABM_KH_P%CURR_STKCNT = 0; FABM_KH_N%CURR_STKCNT = 0
-      FABM_DTFA_P%CURR_STKCNT = 0; FABM_DTFA_N%CURR_STKCNT = 0
-      IF (OBC_ON) THEN 
-      FABM_UA_P%CURR_STKCNT = 0; FABM_UA_N%CURR_STKCNT = 0
-      ENDIF
-#  if defined (WET_DRY)
-      FABM_WN_P%CURR_STKCNT = 0; FABM_WN_N%CURR_STKCNT = 0
-      FABM_WC_P%CURR_STKCNT = 0; FABM_WC_N%CURR_STKCNT = 0
-# endif
-      ! -------------- end new ----------------------------------------------------------
 
 
     IF(DBG_SET(DBG_SBR)) write(IPT,*) "END OFFLINE_FABM_FORCING"
@@ -10198,7 +10662,7 @@ CONTAINS
        NULLIFY(STORAGE_INT)
 # endif
 
-      ! ---------- new: 2016 , april, Karsten Lettmann after Hint by Qi and ayumi.fujisaki@noaa.gov------
+      ! ---------- new: 2016 , april, after Hint by Qi and ayumi.fujisaki@noaa.gov------
       ! Initialize some variables 
       ! afm 20150914
       ! Need initialization. Otherwise, random values are asigned
@@ -11413,7 +11877,7 @@ CONTAINS
     END SELECT
 !==============================================================
 
-    ! ---------- new: 2016 , april, Karsten Lettmann after Hint by Qi and ayumi.fujisaki@noaa.gov------
+    ! ---------- new: 2016 , april, after Hint by Qi and ayumi.fujisaki@noaa.gov------
     ! Initialize some variables 
     ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
@@ -11838,7 +12302,7 @@ CONTAINS
 !=====================================================================
 
 
-    ! ---------- new: 2016 , april, Karsten Lettmann after Hint by Qi and ayumi.fujisaki@noaa.gov------
+    ! ---------- new: 2016 , april, after Hint by Qi and ayumi.fujisaki@noaa.gov------
     ! Initialize some variables 
     ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
@@ -11851,6 +12315,9 @@ CONTAINS
     PRECIP_EVP_N%curr_stkcnt = 0
     PRECIP_EVP_P%curr_stkcnt = 0
     ! --------- end new ----------------------------------------------------------------
+
+
+
 
     IF(DBG_SET(DBG_SBR)) write(IPT,*) "END SURFACE_PRECIPITATION"
   END SUBROUTINE SURFACE_PRECIPITATION
@@ -12935,7 +13402,7 @@ CONTAINS
 # if defined (FABM)
        IF(PRESENT(FABMR)) THEN
 
-       DO IFABM=1,size(model%interior_state_variables)
+       DO IFABM=1,size(model%state_variables)
 
           IF(ASSOCIATED(RIVER_FORCING(I)%FABM_N(IFABM)%P))THEN
              ! River data for this variable is available in the current river file
@@ -12963,13 +13430,13 @@ CONTAINS
              !====================================================
 
              DO J =1,NRSF
-                IND = RIVER_FORCING(I)%RIV_FILE2LOC(J) ! Location in river file
+                IND = RIVER_FORCING(I)%RIV_FILE2LOC(J)
                 IF(IND /= 0) FABMR(IND,IFABM) = CURRENT(J)
              END DO
 
              DEALLOCATE(CURRENT)
 ! If variable is not present, decide whether it gets diluted or not
-          ELSE IF ( model%interior_state_variables(IFABM)%no_river_dilution) THEN 
+          ELSE IF ( model%state_variables(IFABM)%no_river_dilution) THEN 
 !           ELSE
              IF(RIVER_TS_SETTING == 'calculated') THEN
                IF(NUMQBC > 0) THEN
@@ -12997,6 +13464,274 @@ CONTAINS
     END DO ! FOR EACH FILE
 
   END SUBROUTINE UPDATE_RIVERS
+
+# if defined (PLUME)
+  !==============================================================================|
+  ! UPDATE PLUMES, added by Qin 05/03/2019
+  !==============================================================================|
+  SUBROUTINE UPDATE_PLUMES(NOW,FLUX,VDIST,TEMP,SALT,FABMR)
+# if defined (FABM)
+    USE MOD_FABM_DATA
+# endif  
+
+    IMPLICIT NONE
+    TYPE(TIME), INTENT(IN) :: NOW
+    REAL(SP), ALLOCATABLE :: FLUX(:,:)
+    REAL(SP), ALLOCATABLE :: VDIST(:,:)
+    REAL(SP), ALLOCATABLE, OPTIONAL :: TEMP(:,:)
+    REAL(SP), ALLOCATABLE, OPTIONAL :: SALT(:,:)
+    REAL(SP), ALLOCATABLE, OPTIONAL :: FABMR(:,:,:)
+
+    REAL(SP), POINTER :: VNP(:,:), VPP(:,:)
+
+    REAL(SP), ALLOCATABLE :: CURRENT(:,:)
+    TYPE(TIME) :: PLMTIME
+
+    TYPE(NCFILE), POINTER :: NCF
+    TYPE(NCVAR), POINTER :: VAR_N
+    TYPE(NCVAR), POINTER :: VAR_P
+    TYPE(NCFTIME), POINTER :: FTM
+    INTEGER :: STATUS, I, J, NRSF,IND,NS
+#if defined (FABM)
+    INTEGER :: IFABM,JJ,J1,J2,KK
+#endif
+
+    IF(.NOT. ALLOCATED(FLUX)) CALL FATAL_ERROR &
+         &("THE PLUME FLUX VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
+
+    IF(.NOT. ALLOCATED(VDIST)) CALL FATAL_ERROR &
+         &("THE PLUME VERTICAL DISTRIBUTION  VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
+
+
+    IF(PRESENT(TEMP)) THEN
+       IF(.NOT. ALLOCATED(TEMP)) CALL FATAL_ERROR &
+            &("THE PLUME TEMP VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
+    END IF
+
+    IF(PRESENT(SALT)) THEN
+       IF(.NOT. ALLOCATED(SALT)) CALL FATAL_ERROR &
+            &("THE PLUME SALT VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
+    END IF
+  
+# if defined (FABM)
+    IF(PRESENT(FABMR)) THEN
+       IF(.NOT. ALLOCATED(FABMR)) CALL FATAL_ERROR &
+            &("THE PLUME FABMR VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
+    END IF
+# endif
+
+    DO I = 1, SIZE(PLUME_FORCING) ! (NUMBER OF FILES)
+       
+       SELECT CASE (PLUME_KIND)
+       CASE(PRDC)
+          
+        CALL FATAL_ERROR("PERIODIC PLUME Not Set Up Yet")     
+          
+       CASE(VRBL)
+           
+          PLMTIME = NOW
+       END SELECT
+       
+
+       NCF => PLUME_FORCING(I)%NCF
+       FTM => NCF%FTIME
+
+       NRSF = PLUME_FORCING(I)%PLUMES_IN_FILE
+
+       ! PLUME FLUX
+       VAR_N => PLUME_FORCING(I)%FLUX_N
+       VAR_P => PLUME_FORCING(I)%FLUX_P
+       CALL UPDATE_VAR_BRACKET(NCF,VAR_P,VAR_N,PLMTIME,STATUS)
+       IF (STATUS /= 0) THEN
+          CALL FATAL_ERROR("COULD NOT UPATE PLUME_FILE TIME BRACKET: BOUNDS EXCEEDED?")
+       end if
+
+       ALLOCATE(CURRENT(NRSF,KBM1))
+
+       CALL NC_POINT_VAR(VAR_N,VNP)
+       CALL NC_POINT_VAR(VAR_P,VPP)
+
+       !====================================================
+       ! Linear interpolation between time points
+       !CURRENT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
+       !
+       ! OR
+       !
+       ! Nearest time sets the value
+       CURRENT = VNP
+       if (FTM%PREV_WGHT .gt. 0.5_sp) CURRENT = VPP
+       !====================================================
+
+       DO J =1,NRSF
+          IND = PLUME_FORCING(I)%PLM_FILE2LOC(J)
+          IF(IND /= 0) FLUX(IND,:) = CURRENT(J,:)
+       END DO
+
+       DEALLOCATE(CURRENT)
+      
+       ! PLUME VERTICAL DISTRIBUTION
+       VAR_N => PLUME_FORCING(I)%VDIST_N
+       VAR_P => PLUME_FORCING(I)%VDIST_P
+       CALL UPDATE_VAR_BRACKET(NCF,VAR_P,VAR_N,PLMTIME,STATUS)
+       IF (STATUS /= 0) THEN
+          CALL FATAL_ERROR("COULD NOT UPATE PLUME_FILE TIME BRACKET: BOUNDS EXCEEDED?")
+       end if
+
+       ALLOCATE(CURRENT(NRSF,KBM1))
+
+       CALL NC_POINT_VAR(VAR_N,VNP)
+       CALL NC_POINT_VAR(VAR_P,VPP)
+
+       !====================================================
+       ! Linear interpolation between time points
+       !CURRENT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
+       !
+       ! OR
+       !
+       ! Nearest time sets the value
+       CURRENT = VNP
+       if (FTM%PREV_WGHT .gt. 0.5_sp) CURRENT = VPP
+       !====================================================
+
+       DO J =1,NRSF
+          IND = PLUME_FORCING(I)%PLM_FILE2LOC(J)
+          IF(IND /= 0) VDIST(IND,:) = CURRENT(J,:)
+       END DO
+
+       DEALLOCATE(CURRENT)
+
+
+       IF(PRESENT(SALT)) THEN
+
+          ! PLUME SALT
+          VAR_N => PLUME_FORCING(I)%SALT_N
+          VAR_P => PLUME_FORCING(I)%SALT_P
+          CALL UPDATE_VAR_BRACKET(NCF,VAR_P,VAR_N,PLMTIME,STATUS)
+          IF (STATUS /= 0) THEN
+             CALL FATAL_ERROR("COULD NOT UPATE PLUME_FILE TIME BRACKET: BOUNDS EXCEEDED?")
+          end if
+
+          ALLOCATE(CURRENT(NRSF,KBM1))
+
+          CALL NC_POINT_VAR(VAR_N,VNP)
+          CALL NC_POINT_VAR(VAR_P,VPP)        
+
+          !====================================================
+          ! Linear interpolation between time points
+          !CURRENT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
+          !
+          ! OR
+          !
+          ! Nearest time sets the value
+          CURRENT = VNP
+          if (FTM%PREV_WGHT .gt. 0.5_sp) current = VPP
+          !====================================================
+
+
+          DO J =1,NRSF
+             IND = PLUME_FORCING(I)%PLM_FILE2LOC(J)
+             IF(IND /= 0) SALT(IND,:) = CURRENT(J,:)
+          END DO
+
+          DEALLOCATE(CURRENT)
+       END IF
+
+       IF(PRESENT(TEMP)) THEN
+
+          ! PLUME TEMP
+          VAR_N => PLUME_FORCING(I)%TEMP_N
+          VAR_P => PLUME_FORCING(I)%TEMP_P
+          CALL UPDATE_VAR_BRACKET(NCF,VAR_P,VAR_N,PLMTIME,STATUS)
+          IF (STATUS /= 0) THEN
+             CALL FATAL_ERROR("COULD NOT UPATE PLM_FILE TIME BRACKET: BOUNDS EXCEEDED?")
+          end if
+
+          ALLOCATE(CURRENT(NRSF,KBM1))
+
+          CALL NC_POINT_VAR(VAR_N,VNP)
+          CALL NC_POINT_VAR(VAR_P,VPP)        
+
+          !====================================================
+          ! Linear interpolation between time points
+          !CURRENT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
+          !
+          ! OR
+          !
+          ! Nearest time sets the value
+          CURRENT = VNP
+          if (FTM%PREV_WGHT .gt. 0.5_sp) current = VPP
+          !====================================================
+
+          DO J =1,NRSF
+             IND = PLUME_FORCING(I)%PLM_FILE2LOC(J)
+             IF(IND /= 0) TEMP(IND,:) = CURRENT(J,:)
+          END DO
+
+          DEALLOCATE(CURRENT)
+       END IF
+
+
+# if defined (FABM)
+       IF(PRESENT(FABMR)) THEN
+
+       DO IFABM=1,size(model%state_variables)
+
+          IF(ASSOCIATED(PLUME_FORCING(I)%FABM_N(IFABM)%P))THEN
+             ! Plume data for this variable is available in the current plume file
+             VAR_N => PLUME_FORCING(I)%FABM_N(IFABM)%P
+             VAR_P => PLUME_FORCING(I)%FABM_P(IFABM)%P
+             CALL UPDATE_VAR_BRACKET(NCF,VAR_P,VAR_N,PLMTIME,STATUS)
+             IF (STATUS /= 0) THEN
+                CALL FATAL_ERROR("COULD NOT UPDATE PLUME_FILE TIME BRACKET: BOUNDS EXCEEDED?")
+             END IF
+
+             ALLOCATE(CURRENT(NRSF,KBM1))
+
+             CALL NC_POINT_VAR(VAR_N,VNP)
+             CALL NC_POINT_VAR(VAR_P,VPP)
+
+             !====================================================
+             ! Linear interpolation between time points
+             !CURRENT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
+             !
+             ! OR
+             !
+             ! Nearest time sets the value
+             CURRENT = VNP
+             if (FTM%PREV_WGHT .gt. 0.5_sp) current = VPP
+             !====================================================
+
+             DO J =1,NRSF
+                IND = PLUME_FORCING(I)%PLM_FILE2LOC(J)
+                IF(IND /= 0)  FABMR(IND,1:KBM1,IFABM) = CURRENT(J,1:KBM1)
+             END DO
+
+             DEALLOCATE(CURRENT)
+            ! If variable is not present, decide whether it gets diluted or not
+            ! NOT SURE IF IT IS NEEDED FOR PLUME MODEL, Qin 05/03/2019
+            ! ELSE IF ( model%state_variables(IFABM)%no_river_dilution) THEN 
+               ! IF(NUMQBC > 0) THEN
+                 ! IF(RIVER_INFLOW_LOCATION == 'node') THEN
+                   ! DO J=1,NUMQBC
+                     ! JJ=INODEQ(J)
+                     ! FABMR(J,IFABM)=SUM(FABM_ALL(JJ,1:KBM1,IFABM))/KBM1
+                   ! ENDDO
+                 ! ELSE IF(RIVER_INFLOW_LOCATION == 'edge') THEN
+                   ! CALL FATAL_ERROR("PLUME_INFLOW_LOCATION NOT SET UP FOR 'EDGE' YET")
+                 ! END IF ! IF node or edge
+               ! END IF ! if NUMQBC > 0
+               !             
+          ENDIF  ! If data is available for the current state variable in the current river file
+       END DO ! For each pelagic FABM state variable
+
+       END IF ! If argument FABM is present
+#endif
+
+    END DO ! FOR EACH FILE
+
+  END SUBROUTINE UPDATE_PLUMES
+# endif
+
   !==============================================================================|
   SUBROUTINE UPDATE_GROUNDWATER(NOW,GW_FLUX,GW_TEMP,GW_SALT)
     IMPLICIT NONE
@@ -13128,7 +13863,7 @@ CONTAINS
 
   END SUBROUTINE UPDATE_GROUNDWATER
   !==============================================================================|
-# if !defined (HEATING_CALCULATED) && !defined (HEATING_SOLAR)
+# if !defined (HEATING_CALCULATED) && !defined (HEATING_CALCULATED_GL) && !defined (HEATING_SOLAR)
   SUBROUTINE UPDATE_HEAT(NOW,HEAT_SWV,HEAT_NET)
     IMPLICIT NONE
     TYPE(TIME), INTENT(IN) :: NOW
@@ -13245,13 +13980,12 @@ CONTAINS
 # endif
   !==============================================================================|
   !==============================================================================|
-# if defined (HEATING_CALCULATED)
-  SUBROUTINE UPDATE_HEAT_CALCULATED(NOW,HEAT_SWV,HEAT_NET,HEAT_SENSIBLE,HEAT_LATENT,HEAT_RLN)
+# if defined (HEATING_CALCULATED) || (HEATING_CALCULATED_GL)
+  SUBROUTINE UPDATE_HEAT_CALCULATED(NOW,HEAT_SWV,HEAT_NET)
     IMPLICIT NONE
     TYPE(TIME), INTENT(IN) :: NOW
     TYPE(TIME)             :: HTIME
     REAL(SP), ALLOCATABLE :: HEAT_SWV(:), HEAT_NET(:)
-    REAL(SP), ALLOCATABLE :: HEAT_SENSIBLE(:), HEAT_LATENT(:), HEAT_RLN(:)
     TYPE(NCFTIME), POINTER :: FTM
     INTEGER :: STATUS,I,J
     REAL(SP), POINTER :: VNP(:), VPP(:)
@@ -13269,15 +14003,6 @@ CONTAINS
 
     IF(.NOT. ALLOCATED(HEAT_NET)) CALL FATAL_ERROR &
          &("THE NET HEAT VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-
-    IF(.NOT. ALLOCATED(HEAT_SENSIBLE)) CALL FATAL_ERROR &
-         &("THE SENSIBLE HEAT VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-
-    IF(.NOT. ALLOCATED(HEAT_LATENT)) CALL FATAL_ERROR &
-         &("THE LATENT HEAT VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-
-    IF(.NOT. ALLOCATED(HEAT_RLN)) CALL FATAL_ERROR &
-         &("THE LONGWAVE HEAT VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
 
     IF(WIND_TYPE /= 'speed')CALL FATAL_ERROR("WIND_TYPE must be 'speed' for heat flux calculating")
        
@@ -13301,71 +14026,26 @@ CONTAINS
          END DO
          WDS = WDS/FLOAT(NTVE(I))
   
-         IF(TRIM(COARE_VERSION) == 'COARE26Z')THEN
-           CALL COARE26Z(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
-                DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I),USR,DTER) !MDR include USR, DTER
-           
-	   IF(.NOT. HEATING_FRESHWATER)THEN		
-	     t1k=t1(i,1)+273.16_sp
-             ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
-             HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
-             HEAT_SWV(I)  = DSW_AIR(I)
-	     !EJA edit - output sensible and latent heat flux
-	     HEAT_SENSIBLE(I) = HSB
-	     HEAT_LATENT(I) = HLB
-!g.l. 10/10/2017         HEAT_RLN(I)  = DLW_AIR(I)
-             HEAT_RLN(I)  = DLW_AIR(I)+ulw_airf	     
-	   ELSE
-	     USRCOARE(I) = USR !MDR 3-19-2013 for wind wave mix
-!             t1k=t1(i,1)+273.16_sp !MDR 4-24-2013
-             t1k=t1(i,1)-DTER+273.16_sp !MDR 4-24-2013, include cool skin adjustment to surface temp
+# if defined (HEATING_CALCULATED)
+         CALL COARE26Z(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
+              DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I))
+         t1k=t1(i,1)+273.16_sp
+         ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
+         HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
+         HEAT_SWV(I)  = DSW_AIR(I)
+# endif
+# if defined (HEATING_CALCULATED_GL)
+         CALL COARE26Z(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
+              DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I),USR,DTER) !MDR include USR, DTER
+	 USRCOARE(I) = USR !MDR 3-19-2013 for wind wave mix
+!         t1k=t1(i,1)+273.16_sp !MDR 4-24-2013
+         t1k=t1(i,1)-DTER+273.16_sp !MDR 4-24-2013, include cool skin adjustment to surface temp
 !MDR         ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
 !MDR         HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
-             ulw_airf=-StefBo*t1k*t1k*t1k*t1k
-             HEAT_NET(I) = DSW_AIR(I)+HSB+HLB+emmiss*(DLW_AIR(I)+ulw_airf) !MDR, apply emmiss to NET long wave, as in COARE     
-             HEAT_SWV(I)  = DSW_AIR(I)
-	     !EJA edit - output sensible and latent heat flux
-	     HEAT_SENSIBLE(I) = HSB
-	     HEAT_LATENT(I) = HLB
-!g.l. 10/10/2017         HEAT_RLN(I)  = DLW_AIR(I)
-             HEAT_RLN(I)  = emmiss*(DLW_AIR(I)+ulw_airf)	     
-	   END IF  
-	 ELSE IF(TRIM(COARE_VERSION) == 'COARE40VN')THEN
-           RAIN(I) = QPREC(I)*3600*1000  ! change unit to mm/hr  from m/s
-	   ZI40 = fmiss
-	   CP40 = 0.0_SP
-	   SIGH = 0.0_SP
-           CALL COARE40VN(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
-                DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I),ZI40(I),RAIN(I),CP40(I),SIGH(I),fmiss,USR,DTER) !MDR include USR, DTER
-
-	   IF(.NOT. HEATING_FRESHWATER)THEN		
-             t1k=t1(i,1)+273.16_sp
-             ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
-             HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
-             HEAT_SWV(I)  = DSW_AIR(I)
-	     !EJA edit - output sensible and latent heat flux
-	     HEAT_SENSIBLE(I) = HSB
-	     HEAT_LATENT(I) = HLB
-!g.l. 10/10/2017         HEAT_RLN(I)  = DLW_AIR(I)
-             HEAT_RLN(I)  = DLW_AIR(I)+ulw_airf	     
-	   ELSE
-             USRCOARE(I) = USR !MDR 3-19-2013 for wind wave mix
-!             t1k=t1(i,1)+273.16_sp !MDR 4-24-2013
-             t1k=t1(i,1)-DTER+273.16_sp !MDR 4-24-2013, include cool skin adjustment to surface temp
-!MDR         ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
-!MDR         HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
-             ulw_airf=-StefBo*t1k*t1k*t1k*t1k
-             HEAT_NET(I) = DSW_AIR(I)+HSB+HLB+emmiss*(DLW_AIR(I)+ulw_airf) !MDR, apply emmiss to NET long wave, as in COARE     
-             HEAT_SWV(I)  = DSW_AIR(I)
-	     !EJA edit - output sensible and latent heat flux
-	     HEAT_SENSIBLE(I) = HSB
-	     HEAT_LATENT(I) = HLB
-!g.l. 10/10/2017         HEAT_RLN(I)  = DLW_AIR(I)
-             HEAT_RLN(I)  = emmiss*(DLW_AIR(I)+ulw_airf)	     
-	   END IF  
-	 ELSE
-	   CALL FATAL_ERROR("The value of COARE_VERSION should be 'COARE26Z' or 'COARE40VN'")
-	 END IF  
+         ulw_airf=-StefBo*t1k*t1k*t1k*t1k
+         HEAT_NET(I) = DSW_AIR(I)+HSB+HLB+emmiss*(DLW_AIR(I)+ulw_airf) !MDR, apply emmiss to NET long wave, as in COARE     
+         HEAT_SWV(I)  = DSW_AIR(I)
+# endif
        END DO
 
        RETURN
@@ -13471,71 +14151,26 @@ CONTAINS
          END DO
          WDS = WDS/FLOAT(NTVE(I))
   
-         IF(TRIM(COARE_VERSION) == 'COARE26Z')THEN
-           CALL COARE26Z(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
-                DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I),USR,DTER) !MDR include USR, DTER
-
-           IF(.NOT. HEATING_FRESHWATER)THEN
-             t1k=t1(i,1)+273.16_sp
-             ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
-             HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
-             HEAT_SWV(I)  = DSW_AIR(I)
-	     !EJA edit - output sensible and latent heat flux
-	     HEAT_SENSIBLE(I) = HSB
-	     HEAT_LATENT(I) = HLB
-!g.l. 10/10/2017         HEAT_RLN(I)  = DLW_AIR(I)
-             HEAT_RLN(I)  = DLW_AIR(I)+ulw_airf	     
-	   ELSE
-             USRCOARE(I) = USR !MDR 3-19-2013 for wind wave mix
-!             t1k=t1(i,1)+273.16_sp !MDR 4-24-2013
-             t1k=t1(i,1)-DTER+273.16_sp !MDR 4-24-2013, include cool skin adjustment to surface temp
+# if defined (HEATING_CALCULATED)
+         CALL COARE26Z(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
+              DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I))
+         t1k=t1(i,1)+273.16_sp
+         ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
+         HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
+         HEAT_SWV(I)  = DSW_AIR(I)
+# endif
+# if defined (HEATING_CALCULATED_GL)
+         CALL COARE26Z(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
+              DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I),USR,DTER) !MDR include USR, DTER
+	 USRCOARE(I) = USR !MDR 3-19-2013 for wind wave mix
+!         t1k=t1(i,1)+273.16_sp !MDR 4-24-2013
+         t1k=t1(i,1)-DTER+273.16_sp !MDR 4-24-2013, include cool skin adjustment to surface temp
 !MDR         ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
 !MDR         HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
-             ulw_airf=-StefBo*t1k*t1k*t1k*t1k
-             HEAT_NET(I) = DSW_AIR(I)+HSB+HLB+emmiss*(DLW_AIR(I)+ulw_airf) !MDR, apply emmiss to NET long wave, as in COARE     
-             HEAT_SWV(I)  = DSW_AIR(I)
-	     !EJA edit - output sensible and latent heat flux
-	     HEAT_SENSIBLE(I) = HSB
-	     HEAT_LATENT(I) = HLB
-!g.l. 10/10/2017         HEAT_RLN(I)  = DLW_AIR(I)
-             HEAT_RLN(I)  = emmiss*(DLW_AIR(I)+ulw_airf)	     
-	   END IF  
-	 ELSE IF(TRIM(COARE_VERSION) == 'COARE40VN')THEN
-           RAIN(I) = QPREC(I)*3600*1000  ! change unit to mm/hr  from m/s
-	   ZI40 = fmiss
-	   CP40 = 0.0_SP
-	   SIGH = 0.0_SP
-           CALL COARE40VN(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
-                DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I),ZI40(I),RAIN(I),CP40(I),SIGH(I),fmiss,USR,DTER) !MDR include USR, DTER
-
-           IF(.NOT. HEATING_FRESHWATER)THEN
-             t1k=t1(i,1)+273.16_sp
-             ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
-             HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
-             HEAT_SWV(I)  = DSW_AIR(I)
-	     !EJA edit - output sensible and latent heat flux
-	     HEAT_SENSIBLE(I) = HSB
-	     HEAT_LATENT(I) = HLB
-!g.l. 10/10/2017         HEAT_RLN(I)  = DLW_AIR(I)
-             HEAT_RLN(I)  = DLW_AIR(I)+ulw_airf	     
-	   ELSE
-	     USRCOARE(I) = USR !MDR 3-19-2013 for wind wave mix
-!             t1k=t1(i,1)+273.16_sp !MDR 4-24-2013
-             t1k=t1(i,1)-DTER+273.16_sp !MDR 4-24-2013, include cool skin adjustment to surface temp
-!MDR         ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
-!MDR         HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
-             ulw_airf=-StefBo*t1k*t1k*t1k*t1k
-             HEAT_NET(I) = DSW_AIR(I)+HSB+HLB+emmiss*(DLW_AIR(I)+ulw_airf) !MDR, apply emmiss to NET long wave, as in COARE     
-             HEAT_SWV(I)  = DSW_AIR(I)
-	     !EJA edit - output sensible and latent heat flux
-	     HEAT_SENSIBLE(I) = HSB
-	     HEAT_LATENT(I) = HLB
-!g.l. 10/10/2017         HEAT_RLN(I)  = DLW_AIR(I)
-             HEAT_RLN(I)  = emmiss*(DLW_AIR(I)+ulw_airf)	     
-	   END IF  
-	 ELSE
-	   CALL FATAL_ERROR("The value of COARE_VERSION should be 'COARE26Z' or 'COARE40VN'")
-	 END IF  
+         ulw_airf=-StefBo*t1k*t1k*t1k*t1k
+         HEAT_NET(I) = DSW_AIR(I)+HSB+HLB+emmiss*(DLW_AIR(I)+ulw_airf) !MDR, apply emmiss to NET long wave, as in COARE     
+         HEAT_SWV(I)  = DSW_AIR(I)
+# endif
        END DO
 
     CASE(HEAT_IS_FVCOMGRID)
@@ -13642,7 +14277,10 @@ CONTAINS
 
          END DO
          UIS = UIS/FLOAT(NTVE(I))
-
+# endif
+  
+# if defined (HEATING_CALCULATED)
+# if defined (OBSICE)
        IF(ICE_COV(I) > 0.5_SP) THEN
        	    	! freezing point
        	    	!!REFERENCE: UNESCO TECH. PAPERS IN THE MARINE SCIENCE NO. 28. 1978
@@ -13680,12 +14318,9 @@ CONTAINS
             ! if temperature is below freezing, reset T to Tf
             !if (T(I,1) <= Tfreez) T(I,1) = Tfreez
        ELSE
-# endif
-         IF(TRIM(COARE_VERSION) == 'COARE26Z')THEN
-           CALL COARE26Z(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
-                DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I),USR,DTER) !MDR include USR, DTER
-
-# if defined(OBSICE)	      
+         CALL COARE26Z(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
+              DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I))
+	      
             t1k= t1(i,1) + 273.16_sp
             
             DHDT_FREEZ(I) = DT(I)*DZ(I,1)*4187.0_SP*(T(I,1) - Tfreez)/(334000.0_SP*600.0_SP)	! Ice thickness by forming, To go into evaporation
@@ -13697,68 +14332,30 @@ CONTAINS
             ! if temperature is below freezing, reset T to Tf
             !if (T(I,1) <= Tfreez) T(I,1) = Tfreez         
        END IF
-# endif
-           IF(.NOT. HEATING_FRESHWATER)THEN	      
-             t1k=t1(i,1)+273.16_sp
-             ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
-             HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
-             HEAT_SWV(I) = DSW_AIR(I)
-	     !EJA edit - output sensible and latent heat flux
-	     HEAT_SENSIBLE(I) = HSB
-	     HEAT_LATENT(I) = HLB
-!g.l. 10/10/2017         HEAT_RLN(I)  = DLW_AIR(I)
-             HEAT_RLN(I)  = DLW_AIR(I)+ulw_airf	     
-	   ELSE
-             USRCOARE(I) = USR !MDR 3-19-2013 for wind wave mix
-!             t1k=t1(i,1)+273.16_sp !MDR 4-24-2013
-             t1k=t1(i,1)-DTER+273.16_sp !MDR 4-24-2013, include cool skin adjustment to surface temp
-!MDR         ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
-!MDR         HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
-             ulw_airf=-StefBo*t1k*t1k*t1k*t1k
-             HEAT_NET(I) = DSW_AIR(I)+HSB+HLB+emmiss*(DLW_AIR(I)+ulw_airf) !MDR, apply emmiss to NET long wave, as in COARE     
-             HEAT_SWV(I)  = DSW_AIR(I)
-	     !EJA edit - output sensible and latent heat flux
-	     HEAT_SENSIBLE(I) = HSB
-	     HEAT_LATENT(I) = HLB
-!g.l. 10/10/2017         HEAT_RLN(I)  =DLW_AIR(I)
-             HEAT_RLN(I)  =emmiss*(DLW_AIR(I)+ulw_airf)	     
-	   END IF  
-	 ELSE IF(TRIM(COARE_VERSION) == 'COARE40VN')THEN
-           RAIN(I) = QPREC(I)*3600*1000  ! change unit to mm/hr  from m/s
-	   ZI40 = fmiss
-	   CP40 = 0.0_SP
-	   SIGH = 0.0_SP
-           CALL COARE40VN(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
-                DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I),ZI40(I),RAIN(I),CP40(I),SIGH(I),fmiss,USR,DTER) !MDR include USR, DTER
+
+
+# else
+         CALL COARE26Z(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
+              DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I))
 	      
-           IF(.NOT. HEATING_FRESHWATER)THEN	      
-             t1k=t1(i,1)+273.16_sp
-             ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
-             HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
-             HEAT_SWV(I) = DSW_AIR(I)
-	     !EJA edit - output sensible and latent heat flux
-	     HEAT_SENSIBLE(I) = HSB
-	     HEAT_LATENT(I) = HLB
-!g.l. 10/10/2017         HEAT_RLN(I)  = DLW_AIR(I)
-             HEAT_RLN(I)  = DLW_AIR(I)+ulw_airf	     
-	   ELSE
-             USRCOARE(I) = USR !MDR 3-19-2013 for wind wave mix
-!             t1k=t1(i,1)+273.16_sp !MDR 4-24-2013
-             t1k=t1(i,1)-DTER+273.16_sp !MDR 4-24-2013, include cool skin adjustment to surface temp
+         t1k=t1(i,1)+273.16_sp
+         ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
+         HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
+         HEAT_SWV(I) = DSW_AIR(I)
+# endif
+# endif
+# if defined (HEATING_CALCULATED_GL)
+         CALL COARE26Z(WDS,ZUU,T_AIR(I),ZTT,RH_AIR(I),ZQQ,PA_AIR(I),T1(I,1),  &
+              DLW_AIR(I),DSW_AIR(I),TAU,HSB,HLB,CORR(I),USR,DTER) !MDR include USR, DTER
+	 USRCOARE(I) = USR !MDR 3-19-2013 for wind wave mix
+!         t1k=t1(i,1)+273.16_sp !MDR 4-24-2013
+         t1k=t1(i,1)-DTER+273.16_sp !MDR 4-24-2013, include cool skin adjustment to surface temp
 !MDR         ulw_airf=-emmiss*StefBo*t1k*t1k*t1k*t1k
 !MDR         HEAT_NET(I) = DLW_AIR(I)+DSW_AIR(I)+HSB+HLB+ulw_airf        ! ejw 8/16/2006 based on ROMS
-             ulw_airf=-StefBo*t1k*t1k*t1k*t1k
-             HEAT_NET(I) = DSW_AIR(I)+HSB+HLB+emmiss*(DLW_AIR(I)+ulw_airf) !MDR, apply emmiss to NET long wave, as in COARE     
-             HEAT_SWV(I)  = DSW_AIR(I)
-	     !EJA edit - output sensible and latent heat flux
-	     HEAT_SENSIBLE(I) = HSB
-	     HEAT_LATENT(I) = HLB
-!g.l. 10/10/2017         HEAT_RLN(I)  =DLW_AIR(I)
-             HEAT_RLN(I)  =emmiss*(DLW_AIR(I)+ulw_airf)	     
-	   END IF  
-	 ELSE
-	   CALL FATAL_ERROR("The value of COARE_VERSION should be 'COARE26Z' or 'COARE40VN'")
-	 END IF  
+         ulw_airf=-StefBo*t1k*t1k*t1k*t1k
+         HEAT_NET(I) = DSW_AIR(I)+HSB+HLB+emmiss*(DLW_AIR(I)+ulw_airf) !MDR, apply emmiss to NET long wave, as in COARE     
+         HEAT_SWV(I)  = DSW_AIR(I)
+# endif
        END DO
 
     CASE DEFAULT
@@ -13771,12 +14368,11 @@ CONTAINS
   !==============================================================================|
   !==============================================================================|
 # if defined (HEATING_SOLAR)
-  SUBROUTINE UPDATE_HEAT_SOLAR(NOW,HEAT_SWV,HEAT_NET,HEAT_SENSIBLE,HEAT_LATENT,HEAT_RLN)
+  SUBROUTINE UPDATE_HEAT_SOLAR(NOW,HEAT_SWV,HEAT_NET)
     IMPLICIT NONE
     TYPE(TIME), INTENT(IN) :: NOW
     TYPE(TIME)             :: HTIME
     REAL(SP), ALLOCATABLE :: HEAT_SWV(:), HEAT_NET(:)
-    REAL(SP), ALLOCATABLE :: HEAT_SENSIBLE(:), HEAT_LATENT(:), HEAT_RLN(:)
     TYPE(NCFTIME), POINTER :: FTM
     INTEGER :: STATUS,I,J
     INTEGER :: JULDAY
@@ -13784,8 +14380,7 @@ CONTAINS
     REAL(SP) :: WDS,CLOUD_TMP,TDEW_TMP
     REAL(SP) :: TANUM,TWAT,TDIFF,LATIT,LONGI
     REAL(SP) :: SOLHR,CHEAT,CDMOM
-    !EJA - Add HS,HL,RLN to variable list
-    REAL(SP) :: SURFLXC,Q0,HS,HL,RLN
+    REAL(SP) :: SURFLXC,Q0
     REAL(SP) :: UZLZ0,UZLFL
     REAL(SP), DIMENSION(0:NT) :: WDSN
 
@@ -13797,15 +14392,6 @@ CONTAINS
 
     IF(.NOT. ALLOCATED(HEAT_NET)) CALL FATAL_ERROR &
          &("THE NET HEAT VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-
-    IF(.NOT. ALLOCATED(HEAT_SENSIBLE)) CALL FATAL_ERROR &
-         &("THE SENSIBLE HEAT VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-
-    IF(.NOT. ALLOCATED(HEAT_LATENT)) CALL FATAL_ERROR &
-         &("THE LATENT HEAT VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-
-    IF(.NOT. ALLOCATED(HEAT_RLN)) CALL FATAL_ERROR &
-         &("THE LONGWAVE HEAT VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
 
     IF(WIND_TYPE /= 'speed')CALL FATAL_ERROR("WIND_TYPE must be 'speed' for heat flux calculating")
        
@@ -13913,7 +14499,6 @@ CONTAINS
          LATIT = LAT(I)
          LONGI = LON(I)
          IF(LONGI > 180.0) LONGI = 360.0 - LONGI
-         IF(LONGI < 0.0) LONGI = ABS(LONGI)
 #        endif
 
          TANUM = T_AIR(I)
@@ -13928,23 +14513,16 @@ CONTAINS
          TDEW_TMP  = TDEW(I)
   
          CALL UZL(WDS,ZM,TDIFF,CDMOM,CHEAT,UZLZ0,UZLFL)
-         !EJA - add HS,HL,RLN to return variable list from SOLAR
-         CALL SOLAR(TANUM,TDEW_TMP,WDS,CLOUD_TMP,TWAT,CHEAT,CDMOM,LATIT,LONGI,JULDAY,MONTH_NOW,SOLHR,SURFLXC,Q0,HS,HL,RLN)
+         CALL SOLAR(TANUM,TDEW_TMP,WDS,CLOUD_TMP,TWAT,CHEAT,CDMOM,LATIT,LONGI,JULDAY,MONTH_NOW,SOLHR,SURFLXC,Q0)
 
          HEAT_NET(I) = SURFLXC     
          HEAT_SWV(I)  = Q0
-         !EJA - add HS,HL,RLN
-         HEAT_SENSIBLE(I) = HS
-         HEAT_LATENT(I) = HL
-         HEAT_RLN(I) = RLN
   
        END DO
        
 #      if defined (MULTIPROCESSOR)
        !*** Edit to fix halo-element problem (output heatflux into NetCDF to verify) - based on Xueming Zhu's analysis - EJA 6/17/2013 ***"
        IF(PAR) CALL AEXCHANGE(NC,MYID,NPROCS,HEAT_NET,HEAT_SWV)
-       !EJA  - add HS,HL,RLN
-       IF(PAR) CALL AEXCHANGE(NC,MYID,NPROCS,HEAT_SENSIBLE,HEAT_LATENT,HEAT_RLN)
 #      endif
 
     CASE(HEAT_IS_FVCOMGRID)
@@ -14011,7 +14589,6 @@ CONTAINS
          LATIT = LAT(I)
          LONGI = LON(I)
          IF(LONGI > 180.0) LONGI = 360.0 - LONGI
-         IF(LONGI < 0.0) LONGI = ABS(LONGI)
 #        endif
 
          TANUM = T_AIR(I)
@@ -14025,23 +14602,16 @@ CONTAINS
          CLOUD_TMP = CLOUD(I)
          TDEW_TMP  = TDEW(I)
          CALL UZL(WDS,ZM,TDIFF,CDMOM,CHEAT,UZLZ0,UZLFL)
-         !EJA - add HS,HL,RLN to return variable list from SOLAR
-         CALL SOLAR(TANUM,TDEW_TMP,WDS,CLOUD_TMP,TWAT,CHEAT,CDMOM,LATIT,LONGI,JULDAY,MONTH_NOW,SOLHR,SURFLXC,Q0,HS,HL,RLN)
+         CALL SOLAR(TANUM,TDEW_TMP,WDS,CLOUD_TMP,TWAT,CHEAT,CDMOM,LATIT,LONGI,JULDAY,MONTH_NOW,SOLHR,SURFLXC,Q0)
 
          HEAT_NET(I) = SURFLXC     
          HEAT_SWV(I)  = Q0
-         !EJA - add HS,HL,RLN
-         HEAT_SENSIBLE(I) = HS
-         HEAT_LATENT(I) = HL
-         HEAT_RLN(I) = RLN
 
        END DO
 
 #      if defined (MULTIPROCESSOR)
        !*** Edit to fix halo-element problem (output heatflux into NetCDF to verify) - based on Xueming Zhu's analysis - EJA 6/17/2013 ***"
        IF(PAR) CALL AEXCHANGE(NC,MYID,NPROCS,HEAT_NET,HEAT_SWV)
-       !EJA  - add HS,HL,RLN
-       IF(PAR) CALL AEXCHANGE(NC,MYID,NPROCS,HEAT_SENSIBLE,HEAT_LATENT,HEAT_RLN)
 #      endif
 
     CASE DEFAULT
@@ -14167,6 +14737,9 @@ CONTAINS
        UISN(1:NT) = SQRT(U(1:NT,1)*U(1:NT,1)+V(1:NT,1)*V(1:NT,1))
        UISROTN(1:NT) = U(1:NT,1)*COSW - V(1:NT,1)*SINW	!! rotate u taking into account the Ekman layer
        VISROTN(1:NT) = U(1:NT,1)*SINW + V(1:NT,1)*COSW	!! rotate v taking into account the Ekman layer
+# endif
+
+# if defined (OBSICE)
        DO I = 1,M
            IF(ICE_COV(I) > 0.5_SP) THEN
            	UIS = 0.0_SP
@@ -14228,14 +14801,14 @@ CONTAINS
   !==============================================================================|
   SUBROUTINE UPDATE_OFFLINE_FABM_FORCING(NOW,offlineb_u,  offlineb_v, offlineb_w&
                                         &,offlineb_s1,offlineb_t1, offlineb_el,offlineb_kh&
-                                        &,offlineb_wn, offlineb_wc, offlineb_uard_obcn,offlineb_dtfa)
+                                        &,offlineb_wn, offlineb_wc, offlineb_uard_obcn)
 
     IMPLICIT NONE
     TYPE(TIME), INTENT(IN) :: NOW
     TYPE(TIME)             :: WTIME
     REAL(SP), ALLOCATABLE  :: offlineb_u(:,:),offlineb_v(:,:),offlineb_w(:,:),offlineb_s1(:,:)
     REAL(SP), ALLOCATABLE  :: offlineb_el(:), offlineb_kh(:,:),offlineb_t1(:,:)
-    REAL(SP), ALLOCATABLE  :: offlineb_uard_obcn(:),offlineb_dtfa(:)
+    REAL(SP), ALLOCATABLE  :: offlineb_uard_obcn(:)
     INTEGER , ALLOCATABLE  :: offlineb_wn(:), offlineb_wc(:)
 
     REAL(SP), POINTER :: VNP(:), VPP(:)
@@ -14263,12 +14836,8 @@ CONTAINS
          &("THE offlineb_wn VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
     IF(.NOT. ALLOCATED(offlineb_wc)) CALL FATAL_ERROR &
          &("THE offlineb_wc VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-    IF (OBC_ON) THEN 
-       IF(.NOT. ALLOCATED(offlineb_uard_obcn)) CALL FATAL_ERROR &
-            &("THE offlineb_uard_obcn VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-    END IF
-    IF(.NOT. ALLOCATED(offlineb_dtfa)) CALL FATAL_ERROR &
-         &("THE offlineb_dtfa VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
+    IF(.NOT. ALLOCATED(offlineb_uard_obcn)) CALL FATAL_ERROR &
+         &("THE offlineb_uard_obcn VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
 
 !===================================================
 
@@ -14376,26 +14945,16 @@ CONTAINS
       offlineb_WC(I)=VNP_INT(I)*VPP_INT(I)
     END DO  
 # endif
-    IF (OBC_ON) THEN 
-       ! THE UARD_OBCN
-       CALL UPDATE_VAR_BRACKET(FABM_FILE,FABM_UA_P,FABM_UA_N,WTIME,STATUS)
-       IF (STATUS /= 0) THEN
-         CALL FATAL_ERROR("COULD NOT UPATE FABM_UA BRACKET: BOUNDS EXCEEDED?")
-       end if
-
-       CALL NC_POINT_VAR(FABM_UA_N,VNP)
-       CALL NC_POINT_VAR(FABM_UA_P,VPP)   
-       offlineb_uard_obcn = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
-    END IF
-    ! THE DTFA
-    CALL UPDATE_VAR_BRACKET(FABM_FILE,FABM_DTFA_P,FABM_DTFA_N,WTIME,STATUS)
+    ! THE UARD_OBCN
+    CALL UPDATE_VAR_BRACKET(FABM_FILE,FABM_UA_P,FABM_UA_N,WTIME,STATUS)
     IF (STATUS /= 0) THEN
-      CALL FATAL_ERROR("COULD NOT UPATE FABM_DTFA BRACKET: BOUNDS EXCEEDED?")
+      CALL FATAL_ERROR("COULD NOT UPATE FABM_UA BRACKET: BOUNDS EXCEEDED?")
     end if
 
-    CALL NC_POINT_VAR(FABM_DTFA_N,VNP)
-    CALL NC_POINT_VAR(FABM_DTFA_P,VPP)   
-    offlineb_dtfa = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
+    CALL NC_POINT_VAR(FABM_UA_N,VNP)
+    CALL NC_POINT_VAR(FABM_UA_P,VPP)   
+    offlineb_uard_obcn = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
+
   END SUBROUTINE UPDATE_OFFLINE_FABM_FORCING
 # endif
 
@@ -14591,7 +15150,7 @@ CONTAINS
 
     CALL NC_POINT_VAR(SEDIMENTS_WC_N,VNP_INT)
     CALL NC_POINT_VAR(SEDIMENTS_WC_P,VPP_INT) 
-    DO I=1,NT
+    DO I=1,MT
       OFFLINE_WC(I)=VNP_INT(I)*VPP_INT(I)
     END DO  
 # endif
@@ -14794,7 +15353,7 @@ CONTAINS
 
     CALL NC_POINT_VAR(BIOLOGY_WC_N,VNP_INT)
     CALL NC_POINT_VAR(BIOLOGY_WC_P,VPP_INT) 
-    DO I=1,NT
+    DO I=1,MT
       OFFLINE_WC(I)=VNP_INT(I)*VPP_INT(I)
     END DO  
 # endif
@@ -15671,7 +16230,7 @@ CONTAINS
 
        FTM => OBC_F_FILE%FTIME
 
-       DO IFABM=1,size(model%interior_state_variables)
+       DO IFABM=1,size(model%state_variables)
           IF (ASSOCIATED(OBC_FABM_P(IFABM)%P)) THEN
              ! Boundary data for this state variable are available
              CALL UPDATE_VAR_BRACKET(OBC_F_FILE,OBC_FABM_P(IFABM)%P,OBC_FABM_N(IFABM)%P,NOW,STATUS)
@@ -15770,10 +16329,6 @@ CONTAINS
        SAT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
 
        ! SHORT WAVE
-# if !defined (ICE_FRESHWATER)
-! afm 20151112 & EJA 20160921 - commented out for solar
-! With SOLAR, use SOLAR-derived shortwave
-! Without SOLAR, use shortwave from forcing data
 !       CALL UPDATE_VAR_BRACKET(ICE_FILE,ICE_SWV_P,ICE_SWV_N,WTIME,STATUS,ICE_INTP_N)
        CALL UPDATE_VAR_BRACKET(HEAT_FILE,ICE_SWV_P,ICE_SWV_N,WTIME,STATUS,ICE_INTP_N)
        IF (STATUS /= 0) THEN
@@ -15783,7 +16338,6 @@ CONTAINS
        CALL NC_POINT_VAR(ICE_SWV_N,VNP)
        CALL NC_POINT_VAR(ICE_SWV_P,VPP)   
        SWV = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
-# endif
 
        ! THE SPECIFIC HUMIDITY
        CALL UPDATE_VAR_BRACKET(ICE_FILE,ICE_SPQ_P,ICE_SPQ_N,WTIME,STATUS,ICE_INTP_N)
@@ -15827,10 +16381,6 @@ CONTAINS
        SAT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
 
        ! SHORT WAVE
-# if !defined (ICE_FRESHWATER)
-! afm 20151001 commented out for solar
-! With SOLAR, use SOLAR-derived shortwave
-! Without SOLAR, use shortwave from forcing data
 !       CALL UPDATE_VAR_BRACKET(ICE_FILE,ICE_SWV_P,ICE_SWV_N,WTIME,STATUS)
        CALL UPDATE_VAR_BRACKET(HEAT_FILE,ICE_SWV_P,ICE_SWV_N,WTIME,STATUS)
        IF (STATUS /= 0) THEN
@@ -15841,7 +16391,6 @@ CONTAINS
        CALL NC_POINT_VAR(ICE_SWV_P,VPP)   
        SWV = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
 
-# endif
 
        ! THE SPECIFIC HUMIDITY
        CALL UPDATE_VAR_BRACKET(ICE_FILE,ICE_SPQ_P,ICE_SPQ_N,WTIME,STATUS)
@@ -16866,7 +17415,7 @@ CONTAINS
     END SELECT
 !==============================================================
 
-    ! ---------- new: 2016 , april, Karsten Lettmann after Hint by Qi -------------------------
+    ! ---------- new: 2016 , april, after Hint by Qi -------------------------
     ! Initialize some variables 
     ! afm 20150914
     ! Need initialization. Otherwise, random values are asigned
