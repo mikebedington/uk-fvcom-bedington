@@ -1785,14 +1785,13 @@ END SUBROUTINE FABM_MIXING
  !--------------------------------Plum flux part----------------------
 ! Added by Qin 07/03/2019
 # if  defined (PLUME)
-# if defined(PLUME_CALCULATED)
   DO I=1,M
        DO K=1,KBM1
   !             FABM_FRESH(JJ,K)=FABMDIS(J,K,IFABM)
                XFLUX(I,K,IFABM)=XFLUX(I,K,IFABM) - FLXPLM(I,K)*VDISTPLM(I,K)*FABMPLM(I,K,IFABM)
          END DO
      END DO
-# endif
+
 # endif
 
 
@@ -2141,7 +2140,6 @@ END SUBROUTINE FABM_MIXING
 !--------------------------------Plum flux part----------------------
 ! Added by Qin 07/03/2019
 # if defined (PLUME)
-<<<<<<< HEAD
 # if !defined (PLUME_CALCULATED)
    IF (NUMPLM>0) THEN
      DO J=1,NUMPLM
@@ -2152,9 +2150,6 @@ END SUBROUTINE FABM_MIXING
       END DO
    END IF
 # else
-=======
-# if defined(PLUME_CALCULATED)
->>>>>>> 70a1f9c (plume_calculated is defined when the output variables fromthe plume model is used)
    DO I=1,M
          DO K=1,KBM1
               XFLUX(I,K,IFABM)=XFLUX(I,K,IFABM) - FLXPLM(I,K)*VDISTPLM(I,K)*FABMPLM(I,K,IFABM)
@@ -2164,9 +2159,11 @@ END SUBROUTINE FABM_MIXING
 # endif
 <<<<<<< HEAD
 
-=======
->>>>>>> 70a1f9c (plume_calculated is defined when the output variables fromthe plume model is used)
 # endif
+=======
+!-------------------------------------------------------------------------------!
+# endif   ! end of !defined MPDATA 
+>>>>>>> 4768a9a (removed unnecessary comments)
 
   !--Update Variables------------------------------------------------------------!
   !

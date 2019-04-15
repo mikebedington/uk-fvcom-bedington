@@ -676,20 +676,22 @@
 # if defined(PLUME)
 #   if !defined (PLUME_CALCULATED)
       IF(NUMPLM_GL .GT. 0)  THEN
+<<<<<<< HEAD
         CALL UPDATE_PLUMES(IntTime,FLXPLM,VDISTPLM,TEMP=TPLM,SALT=SPLM)  
 #     if defined(FABM)
         CALL UPDATE_PLUMES(IntTime,FLXPLM,VDISTPLM,FABMR=FABMPLM)  ! needs to double check
 #     endif   
         FLXPLM    = FLXPLM*RAMP
       END IF
-<<<<<<< HEAD
 #   else
 #     if defined(FABM)
 =======
-!  call plume model,  the case of not-call-plume-model is not ready.
-!  Qin, 14/04/2019
+        CALL UPDATE_PLUMES(IntTime,QPLMDIS,TEMP=TPLMDIS,SALT=SPLMDIS)  
+# if defined(FABM)
+        IF (FABM_MODEL) CALL UPDATE_PLUMES(IntTime,QPLMDIS,FABMR=FABMPLMDIS) 
+# endif   
 # if defined(PLUME_CALCULATED)
->>>>>>> 544143c (call update_plumes_calculated only plume_calculate is defined)
+>>>>>>> 4768a9a (removed unnecessary comments)
        CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PT=TPLM,PS=SPLM)
        IF (FABM_MODEL) CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PTR=FABMPLM)
 <<<<<<< HEAD
@@ -700,7 +702,8 @@
 =======
 # endif
 # endif
->>>>>>> 544143c (call update_plumes_calculated only plume_calculate is defined)
+       END IF
+>>>>>>> 4768a9a (removed unnecessary comments)
 # endif   
 !----------------------------------      
       
