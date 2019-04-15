@@ -47,26 +47,20 @@ MODULE MOD_PLUME
     REAL(SP)    :: PLUME_DIFFUSOR_DISTANCE       ! Distance between diffusors
     REAL(SP)    :: PLUME_DIFFUSOR_RADIUS         ! Radius of the plume source
     REAL(SP)    :: PLUME_DIFFUSOR_DEPTH          ! Depth between bottom and diffusor
-    REAL(SP)    :: PLUME_INITIAL_TEMPERATURE     ! INITIAL PLUME TEMPERATURE
-    REAL(SP)    :: PLUME_INITIAL_SALINITY        ! INITIAL PLUME SALINITY
-    REAL(SP)    :: PLUME_INITIAL_CONCENTRATION   ! INITIAL PLUME CONCENTRATION
-    REAL(SP)    :: PLUME_INITIAL_VOLUME_FLUX     ! INITIAL PLUME VOLUMN FLUX
+    REAL(SP)    :: PLUME_RELEASE_TEMPERATURE     ! PLUME DISCHARGE TEMPERATURE
+    REAL(SP)    :: PLUME_RELEASE_SALINITY        ! PLUME DISCHARGE SALINITY
+    REAL(SP)    :: PLUME_RELEASE_CONCENTRATION   ! PLUME DISCHARGE CONCENTRATION
+    REAL(SP)    :: PLUME_RELEASE_FLUX            ! PLUME DISCHARGE VOLUMN FLUX
     REAL(SP)    :: PIPE_RADIUS                   ! RADIUS OF THE PIPE PROVIDING THE VOLUMEFLUX
 
     NAMELIST /NML_PLUME_CALCULATED/            &
     & PLUME_CALCULATE_ON,                      &
     & PLUME_DIFFUSOR_ON,                       &
-    & PLUME_RELEASE_NODEID,                    &
-    & PLUME_RELEASE_SIGMALAYER,                &
     & PLUME_DIFFUSOR_UP,                       &
     & PLUME_DIFFUSOR_DOWN,                     &
     & PLUME_DIFFUSOR_DISTANCE,                 &
     & PLUME_DIFFUSOR_RADIUS,                   &
     & PLUME_DIFFUSOR_DEPTH,                    &
-    & PLUME_INITIAL_TEMPERATURE,               &
-    & PLUME_INITIAL_SALINITY,                  &
-    & PLUME_INITIAL_CONCENTRATION,             &
-    & PLUME_INITIAL_VOLUME_FLUX,               &
     & PIPE_RADIUS
 	
     CONTAINS
@@ -80,18 +74,12 @@ MODULE MOD_PLUME
       IMPLICIT NONE
       
       PLUME_CALCULATE_ON            =  .FALSE.                
-      PLUME_DIFFUSOR_ON             =  .FALSE.
-      PLUME_RELEASE_NODEID          =  0                 
-      PLUME_RELEASE_SIGMALAYER      =  0   
+      PLUME_DIFFUSOR_ON             =  .FALSE. 
       PLUME_DIFFUSOR_UP             =  0.0_SP
       PLUME_DIFFUSOR_DOWN           =  0.0_SP
       PLUME_DIFFUSOR_DISTANCE       =  0.0_SP
       PLUME_DIFFUSOR_RADIUS         =  0.0_SP
-      PLUME_DIFFUSOR_DEPTH          =  0.0_SP
-      PLUME_INITIAL_TEMPERATURE     =  0.0_SP          
-      PLUME_INITIAL_SALINITY        =  0.0_SP        
-      PLUME_INITIAL_CONCENTRATION   =  0.0_SP              
-      PLUME_INITIAL_VOLUME_FLUX     =  0.0_SP            
+      PLUME_DIFFUSOR_DEPTH          =  0.0_SP           
       PIPE_RADIUS                   =  0.0_SP
    
       RETURN
@@ -146,11 +134,16 @@ MODULE MOD_PLUME
 ! Allocate variables output from the plume model	
 !==============================================================================|
       SUBROUTINE PLUME_CALCULATE_INIT
+#  if defined(FABM)
+    USE MOD_FABM_DATA
+#  endif 
       ALLOCATE(FLXPLM(0:MT,KB)) ;              FLXPLM     =   ZERO ! 
       ALLOCATE(VDISTPLM(0:MT,KB)) ;            VDISTPLM   =   ZERO ! 
       ALLOCATE(TPLM(0:MT,KB)) ;                TPLM       =   ZERO ! 
       ALLOCATE(SPLM(0:MT,KB)) ;                SPLM       =   ZERO !
-   
+# if defined(FABM)
+      ALLOCATE(FABMPLM(0:MT,KB,SIZE(FABM_ALL(0,0,:)))) ; FABMPLM    =   ZERO !
+# endif   
 !==============================================================================|
       END SUBROUTINE PLUME_CALCULATE_INIT
 !==============================================================================|
@@ -227,7 +220,7 @@ MODULE MOD_PLUME
       INTEGER,  INTENT(OUT), DIMENSION(0:MT,KB)           ::                               VDIST
       REAL(SP), INTENT(OUT), DIMENSION(0:MT,KB)           ::                               PFLUX
       INTEGER                                             ::       A,B,C,INS,IFABM,INODE,K,I,J,O
-      INTEGER                                             ::                        FAB,NEWROUND
+      INTEGER                                             ::                  II,JJ,FAB,NEWROUND
       REAL(SP)                                            :: INIT_V,entcoef,AREA,radius,Wn,Vn,Fn
       REAL(SP), DIMENSION(KB)                             ::             PDEPTH,NN,TEMPPF,SALTPF
       REAL(SP), ALLOCATABLE                               ::             FABMPF(:,:), PTRACER(:)
@@ -290,26 +283,26 @@ MODULE MOD_PLUME
 ! ---
 ! Calculate the buoyancy flux based on input salt and temperature
 ! ---
-     PRESSURE = -GRAV_N(INODE)*1.025_SP*(ZZ(INODE,INS)*D(INODE))*0.1_SP 
+         PRESSURE = -GRAV_N(INODE)*1.025_SP*(ZZ(INODE,INS)*D(INODE))*0.1_SP 
      ! H: I could not get this function work for scalar T and S, hence
      !    passing the variables as vectors instead.
-     PTT      = PTEMP
-     PSS      = PSALT
+        PTT      = PTEMP
+        PSS      = PSALT
 
-     SELECT CASE(SEA_WATER_DENSITY_FUNCTION)
-     CASE(SW_DENS1)
-       CALL FOFONOFF_MILLARD(PSS,PTT,PRESSURE,0.0_SP,PRHO)
+       SELECT CASE(SEA_WATER_DENSITY_FUNCTION)
+        CASE(SW_DENS1)
+        CALL FOFONOFF_MILLARD(PSS,PTT,PRESSURE,0.0_SP,PRHO)
 
-     CASE(SW_DENS2)
+       CASE(SW_DENS2)
        CALL DENS2G(PSS,PTT,PRHO)
 
-     CASE(SW_DENS3)      
+       CASE(SW_DENS3)      
        CALL JACKET_MCDOUGALL(PSS,PTT,PRESSURE,PRHO)                                                   
 
-     CASE DEFAULT
-      CALL FATAL_ERROR("INVALID DENSITY FUNCTION SELECTED:",&
+       CASE DEFAULT
+       CALL FATAL_ERROR("INVALID DENSITY FUNCTION SELECTED:",&
            & "   "//TRIM(SEA_WATER_DENSITY_FUNCTION) )
-     END SELECT
+       END SELECT
 
 ! --- 
 ! Estimate the buoyancy flux
@@ -334,6 +327,8 @@ MODULE MOD_PLUME
       NN(1)          = 0.0_SP
       NN(KB)         = 0.0_SP
       PDEPTH         = DZZ(INODE,:)*D(INODE)
+
+
 
 !     Integrate from the input sigma layer, activate it
       K              = INS    ! INPUT sigma layer
