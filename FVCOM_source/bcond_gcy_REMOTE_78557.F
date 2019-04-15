@@ -59,12 +59,9 @@
 #  if defined (SEDIMENT)
    USE MOD_SED
 #  endif
-# if defined (PLUME_CALCULATED)
-  USE MOD_PLUME
-# endif
 
-#  if defined (HEATING_CALCULATED)
-   USE MOD_HEATFLUX, ONLY : HEATING_CALCULATE_ON,HEATING_FRESHWATER
+#  if defined (HEATING_CALCULATED) || (HEATING_CALCULATED_GL)
+   USE MOD_HEATFLUX, ONLY : HEATING_CALCULATE_ON
 #  endif
 #  if defined (HEATING_SOLAR)
    USE MOD_SOLAR, ONLY : HEATING_SOLAR_ON
@@ -525,7 +522,6 @@
 
 !-----Plume Dischage----------------------------
 !  Added by Qin  05/03/2019
-
 # if defined(PLUME)
 # if !defined (PLUME_CALCULATED)
     IF(NUMPLM_GL .GT. 0)  THEN
@@ -566,7 +562,7 @@
         
      END IF
 
-# if !defined (HEATING_CALCULATED) &&!defined (HEATING_SOLAR)
+# if !defined (HEATING_CALCULATED) && !defined (HEATING_CALCULATED_GL) &&!defined (HEATING_SOLAR)
      IF (HEATING_ON) THEN
          CALL UPDATE_HEAT(IntTime,SWRAD_WATTS,WTSURF_WATTS)
          
@@ -588,55 +584,45 @@
       END IF
 # endif      
       
-# if defined (HEATING_CALCULATED)
+# if defined (HEATING_CALCULATED) || (HEATING_CALCULATED_GL)
       IF (HEATING_CALCULATE_ON) THEN
-         CALL UPDATE_HEAT_CALCULATED(IntTime,SWRAD_WATTS,WTSURF_WATTS,HSENS_WATTS,HLAT_WATTS,LWRAD_WATTS)
+         CALL UPDATE_HEAT_CALCULATED(IntTime,SWRAD_WATTS,WTSURF_WATTS)
          
          ! LOAD INTO THES VARIABLE TO SAVE THE FORCING IN THE CORRECT UNITS
          SWRAD_WATTS  = SWRAD_WATTS * RAMP
          WTSURF_WATTS = WTSURF_WATTS * RAMP
-         !EJA edit - add HSENS, HLAT, LWRAD 05/03/2016
-         HSENS_WATTS = HSENS_WATTS * RAMP
-         HLAT_WATTS = HLAT_WATTS * RAMP
-         LWRAD_WATTS = LWRAD_WATTS * RAMP
 
-         IF(.NOT. HEATING_FRESHWATER)THEN
-	   SPCP=4.2174E3_SP
-           ROSEA = 1.023E3_SP
-           SPRO = SPCP*ROSEA
-	 ELSE  
-           SPCP=4.186E3_SP
-           ROSEA = 1.000E3_SP
-           SPRO = SPCP*ROSEA
-	 END IF  
+# if defined (HEATING_CALCULATED)
+         SPCP=4.2174E3_SP
+         ROSEA = 1.023E3_SP
+         SPRO = SPCP*ROSEA
+# else
+         SPCP=4.186E3_SP
+         ROSEA = 1.000E3_SP
+         SPRO = SPCP*ROSEA
+# endif
          
          WTSURF    = -WTSURF_WATTS/SPRO
          SWRAD     = -SWRAD_WATTS/SPRO
 	 
 # if defined (MULTIPROCESSOR)
-         !EJA edit - add HSENS, HLAT, LWRAD 05/03/2016
          IF(PAR)CALL AEXCHANGE(NC,MYID,NPROCS,SWRAD_WATTS,WTSURF_WATTS)         
-         IF(PAR)CALL AEXCHANGE(NC,MYID,NPROCS,HSENS_WATTS,HLAT_WATTS,LWRAD_WATTS)
 # endif
 
       END IF
 # endif      
 # if defined (HEATING_SOLAR)
       IF (HEATING_SOLAR_ON) THEN
-         CALL UPDATE_HEAT_SOLAR(IntTime,SWRAD_WATTS,WTSURF_WATTS,HSENS_WATTS,HLAT_WATTS,LWRAD_WATTS)
+         CALL UPDATE_HEAT_SOLAR(IntTime,SWRAD_WATTS,WTSURF_WATTS)
          
          ! LOAD INTO THES VARIABLE TO SAVE THE FORCING IN THE CORRECT UNITS
          SWRAD_WATTS  = SWRAD_WATTS * RAMP
          WTSURF_WATTS = WTSURF_WATTS * RAMP
-         !EJA edit - add HSENS, HLAT, LWRAD 05/03/2016
-         HSENS_WATTS = HSENS_WATTS * RAMP
-         HLAT_WATTS = HLAT_WATTS * RAMP
-         LWRAD_WATTS = LWRAD_WATTS * RAMP
 
-         ROSEA1 = (-.0057)*T1(:,1)*T1(:,1) + 0.0249*T1(:,1) + 1000.
+         ROSEA1 = (-.0057)*T1(:,1)*T1(:,1) + 0.0249*T1(:,1) + 1000
          !IF(TWAT .LT. 3.9) WRITE(IPT,*)'WATER TEMP BELOW 4 C, BEWARE DENSITY CALCULATION!, TWAT = ',TWAT
          !IF(TWAT .GT. 30.1) WRITE(IPT,*)'WATER TEMP ABOVE 30 C, BEWARE DENSITY CALCULATION!, TWAT = ',TWAT
-         SPCP  = 4186.
+         SPCP  = 4186
          !SPRO  = SPCP*ROSEA
          SPRO1  = SPCP*ROSEA1
                     
@@ -648,9 +634,7 @@
          SWRAD     = -SWRAD_WATTS/SPRO1
 	 
 # if defined (MULTIPROCESSOR)
-         !EJA edit - add HSENS, HLAT, LWRAD 05/03/2016
          IF(PAR)CALL AEXCHANGE(NC,MYID,NPROCS,SWRAD_WATTS,WTSURF_WATTS)         
-         IF(PAR)CALL AEXCHANGE(NC,MYID,NPROCS,HSENS_WATTS,HLAT_WATTS,LWRAD_WATTS)
 # endif
 
       END IF
@@ -675,7 +659,7 @@
 # if defined (FABM) && defined (OFFLINE_FABM)
       IF (FABM_MODEL) CALL UPDATE_OFFLINE_FABM_FORCING(IntTime,offlineb_u,  offlineb_v, offlineb_w&
                                         &,offlineb_s1,offlineb_t1, offlineb_el,offlineb_kh&
-                                        &,offlineb_wn, offlineb_wc,offlineb_uard_obcn,offlineb_dtfa)
+                                        &,offlineb_wn, offlineb_wc,offlineb_uard_obcn)
 # endif
 
 !

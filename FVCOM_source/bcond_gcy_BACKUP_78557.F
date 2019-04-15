@@ -525,8 +525,21 @@
 
 !-----Plume Dischage----------------------------
 !  Added by Qin  05/03/2019
-
 # if defined(PLUME)
+<<<<<<< HEAD
+      IF(NUMPLM_GL .GT. 0)  THEN
+        CALL UPDATE_PLUMES(IntTime,QPLMDIS,TEMP=TPLMDIS,SALT=SPLMDIS)  
+# if defined(FABM)
+        CALL UPDATE_PLUMES(IntTime,QPLMDIS,FABMR=FABMPLMDIS)  ! needs to double check
+# endif           
+      END IF
+!  call plume model,  the case of not-call-plume-model is not ready.
+!  Qin, 14/04/2019
+      CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PT=TPLM,PS=SPLM)
+# if defined(FABM)
+       IF (FABM_MODEL) CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PTR=FABMPLM)
+# endif 
+=======
 # if !defined (PLUME_CALCULATED)
     IF(NUMPLM_GL .GT. 0)  THEN
       CALL UPDATE_PLUMES(IntTime,FLXPLM,VDISTPLM,TEMP=TPLM,SALT=SPLM)  
@@ -541,6 +554,7 @@
       IF (FABM_MODEL) CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PTR=FABMPLM)
 # endif
 # endif
+>>>>>>> 027c5fd (PLUME changes)
 # endif   
 !----------------------------------      
 

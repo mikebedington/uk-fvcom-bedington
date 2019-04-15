@@ -26,6 +26,7 @@
 ! $Revision$
 !/===========================================================================/
 
+
 !==============================================================================|
 !     SET BOUNDARY CONDITIONS FOR ALMOST ALL VARIABLES                         |
 !                                                                              |
@@ -42,7 +43,7 @@
 !                                                                              |
 !==============================================================================|
 
-   SUBROUTINE BCOND_GCY(IDX,K_RK)
+   SUBROUTINE BCOND_GCN(IDX,K_RK)
 
 !==============================================================================|
    USE ALL_VARS
@@ -52,16 +53,30 @@
    USE MOD_PAR
    USE MOD_WD
    USE MOD_BULK
+#  if defined (ICE)
+!  hhu ice bc 2/8/2017
+   use ice_state  !hhu
+!  hhu
+#  endif
 
+# if defined(FABM)
+   USE MOD_FABM_DATA
+!   USE fabm
+# endif
 #  if defined (WATER_QUALITY)
    USE MOD_WQM
 #  endif
 #  if defined (SEDIMENT)
    USE MOD_SED
 #  endif
+
 # if defined (PLUME_CALCULATED)
   USE MOD_PLUME
 # endif
+
+#  if defined (THIN_DAM)
+   USE MOD_DAM, ONLY : NBE_DAM,KDAM1,CLP_CELL,CLP_ALPHA,CLP_KDAM   !Jadon
+#  endif
 
 #  if defined (HEATING_CALCULATED)
    USE MOD_HEATFLUX, ONLY : HEATING_CALCULATE_ON,HEATING_FRESHWATER
@@ -78,9 +93,8 @@
    REAL(SP) :: TT1(KBM1),TT2(KBM1),SS1(KBM1),SS2(KBM1)
 !   REAL(SP) :: TIME1,FACT,UFACT,FORCE,QPREC,QEVAP,UI,VI,UNTMP,VNTMP,TX,TY,HFLUX
    REAL(SP) :: TIME1,FACT,UFACT,FORCE,UI,VI,UNTMP,VNTMP,TX,TY,HFLUX
-
 !   REAL(SP) :: DTXTMP,DTYTMP,QPREC2,QEVAP2,SPRO,WDS,CD,SPCP,ROSEA
-   REAL(SP) :: DTXTMP,DTYTMP,SPRO,WDS,CD,SPCP,ROSEA,ROSEA1(MT),SPRO1(MT)
+   REAL(SP) :: DTXTMP,DTYTMP,SPRO,WDS,CD,SPCP,ROSEA,ROSEA1(0:MT),SPRO1(0:MT) !,ROSEA1(MT),SPRO1(MT)
    REAL(SP) :: PHAI_IJ,ALPHA1,DHFLUXTMP,DHSHORTTMP,HSHORT,TIMERK1
 
    ! VARIABLES FOR LONG SHORE FLOW STUFF
@@ -92,17 +106,26 @@
    REAL(SP),POINTER :: eta_lcl(:), eta_gbl(:) ,elfgeo_gbl(:),elfgeo_lcl(:)
 
    INTEGER  I,J,K,I1,I2,J1,J2,II,L1,L2,IERR
-   INTEGER  cdx,ndx,K_RK
+   INTEGER  cdx,ndx,KDAM_TMP,K_RK
+# if defined(FABM)
+   INTEGER JJ,IFABM
+# endif
+
+!!$!=================|DEBUG|============================
+!!$   LOGICAL, save :: INIT=.false.
+!!$   INTEGER, save :: icount
+!!$   character(len=5):: ccount
+!!$   REAL(SP),POINTER :: temp_lcl(:),temp_gl(:) 
+!!$!=================|DEBUG|============================
 
 
-  if(dbg_set(dbg_sbr)) write(ipt,*) "Start: bcond_gcy: ",idx
+  if(dbg_set(dbg_sbr)) write(ipt,*) "Start: bcond_gcn: ",idx
 
-   
+
    SELECT CASE(IDX)
 !==============================================================================|
    CASE(1) !Surface Elevation Boundary Conditions (Tidal Forcing)              !
 !==============================================================================|
-
    IF(OBC_ELEVATION_FORCING_ON) CALL BCOND_ASL
    CALL BCOND_ASL_CLP
    CALL BCOND_GWI(K_RK)
@@ -153,19 +176,45 @@
          
          ELF(I1)=ELF(I1) - WNDALONG*RBC_WDF(I)
 
+!!$         !=================|DEBUG|============================
+!!$ THIS IS NOT PARALLEL SAFE!
+!!$            if(.not. INIT)then
+!!$               init =.true.
+!!$               icount=0
+!!$            end if
+!!$            
+!!$            IF(I==1) THEN
+!!$               write(ccount,'(I5.5)') icount
+!!$               
+!!$               call FOPEN(157,"WDF_"//ccount,'ofr')
+!!$               write(157,*) "WDF DEBUG: ",icount
+!!$               write(157,*) "Node#, ANG,  ELFGEO"
+!!$            END IF
+!!$
+!!$            write(157,*) IBCLSF(I), WDF_ANG(I)/deg2rad, RBC_WDF(I),&
+!!$                 &-1.0_SP*WNDALONG*RBC_WDF(I), MAG_WND*SIN(ANG_WND)
+!!$
+!!$            IF(I==nobclsf) THEN
+!!$               icount = icount +1
+!!$               
+!!$               close(157)
+!!$            END IF
+!!$!=================|DEBUG|============================
+
       END DO
       
       
 
       ! NOW ADJUSTMENT ELF UNDER THERMAL WIND SUCH THAT THE BOTTOM
       ! VELOCITY IS ZERO 
-
       allocate(eta_lcl(NOBCLSF)); eta_lcl=0.0_sp
+! DEBUG
+!      allocate(temp_lcl(NOBCLSF)); temp_lcl=0.0_sp
 
       RHOINTCUR= 0.0_SP
       RHOINTNXT = 0.0_SP
 
-      DO I=NOBCLSF,1,-1  ! COUNT BACKWARDS
+      DO I=NOBCLSF,1,-1  ! COUNT BACKWARDS - The onshore direction
          ndx  = NBCLSF(I)
          cdx = IBCLSF(i)
 
@@ -175,7 +224,9 @@
          DO K=1,KBM1
             RHOINTNXT=RHOINTNXT+(1.0_SP+RHO1(CDX,K))*1.0E3_SP*DZ(CDX,K)
          END DO
-         
+! DEBUG         
+!         temp_lcl(I)=RHOINTNXT
+
 !ESTIMATE DENSITY GRADIENT, AND MODIFY BOUNDARY ELEVATION
 !NOTE THE FACTOR OF 1000 AND 2 TO COMPENSATE FOR THE
 !FACT THAT THE MODEL STORES RHO1 AS SIGMA, AND IN CGS.
@@ -201,25 +252,57 @@
          DO I=NOBCLSF,1,-1 ! COUNT BACKWARD FROM THE SHELF TOWARD SHORE
             NDX=ibclsf(I)
             CUMEL=CUMEL+ETA_LCL(I)
-            ELF(NDX)=ELF(NDX)+CUMEL*RBC_GEO(I)
+            ELF(NDX)=ELF(NDX)+ CUMEL *RBC_GEO(I)
 !            write(ipt,*) "NDX=",NDX,"ELF(NDX)=",ELF(NDX)
          END DO
       END IF
-      
+
 # if defined (MULTIPROCESSOR)
       IF(PAR)THEN
          IF(MSR) THEN
             ALLOCATE(ETA_GBL(NOBCLSF_GL)); ETA_GBL = 0.0_SP
             ALLOCATE(ELFGEO_GBL(NOBCLSF_GL)); ELFGEO_GBL = 0.0_SP
+! DEBUG
+!            allocate(temp_gl(NOBCLSF_GL)); temp_gl=0.0_sp
          END IF
 
          CALL PCOLLECT(MYID,MSRID,NPROCS,LSFMAP,ETA_LCL,ETA_GBL)
+! DEBUG
+!         CALL PCOLLECT(MYID,MSRID,NPROCS,LSFMAP,temp_lcl,temp_gl)
          
          IF (MSR) THEN
+                        
             DO I=NOBCLSF_GL,1,-1 ! COUNT BACKWARD FROM THE SHELF TOWARD SHORE
                CUMEL=CUMEL+ETA_GBL(I)
                ELFGEO_GBL(I)=CUMEL
             END DO
+
+!!$!=================|DEBUG|============================
+!!$
+!!$            write(ipt,*) "writing file"
+!!$
+!!$            if(.not. INIT)then
+!!$               init =.true.
+!!$               icount=0
+!!$            end if
+!!$            
+!!$            write(ccount,'(I5.5)') icount
+!!$
+!!$            call FOPEN(157,"LSF_"//ccount,'ofr')
+!!$
+!!$            write(157,*) "LSF DEBUG: ",icount
+!!$            write(157,*) "one dens =",rho1(1,:)
+!!$            write(157,*) "Node#, ETA,  ELFGEO"
+!!$            do I=NOBCLSF_GL,1,-1
+!!$               write(157,*) I, temp_gl(I), ETA_GBL(I), ELFGEO_GBL(I)
+!!$            end do
+!!$            
+!!$            icount = icount +1
+!!$
+!!$            close(157)
+!!$            
+!!$!=================|DEBUG|============================
+
          END IF
 
          ALLOCATE(ELFGEO_LCL(NOBCLSF)); ELFGEO_LCL = 0.0_SP
@@ -228,20 +311,22 @@
 
          DO I=NOBCLSF,1,-1 ! COUNT BACKWARD FROM THE SHELF TOWARD SHORE
             NDX=ibclsf(I)
-            ELF(NDX)=ELF(NDX)+ ELFGEO_LCL(I)*RBC_GEO(I)          
-!            write(ipt,*) "NDX=",NDX,"ELF(NDX)=",ELF(NDX)
+            ELF(NDX)=ELF(NDX)+ELFGEO_LCL(I)*RBC_GEO(I)            
          END DO
 
          IF (MSR) THEN
             DEALLOCATE(ETA_GBL)
             DEALLOCATE(ELFGEO_GBL)
+! DEBUG
+!            deallocate(temp_gl)
          END IF
 
          DEALLOCATE(elfgeo_lcl)
       END IF
 
 # endif
-
+! DEBUG
+!      deallocate(temp_lcl)
       DEALLOCATE(eta_lcl)
 
    END IF
@@ -256,15 +341,14 @@
 !
 !--2 SOLID BOUNDARY EDGES------------------------------------------------------|
 !
-!Q&C< commented on 06/22/04
-!   IF(ISBCE(I) == 3) THEN
-!     UAF(I)=0.0_SP
-!     VAF(I)=0.0_SP
-!   END IF
+   IF(ISBCE(I) == 3) THEN
+     UAF(I)=0.0_SP
+     VAF(I)=0.0_SP
+   END IF
 
 !  GWC SPEED REPLACE ABOVE 4 LINES
-!   UAF(LISBCE_3(1:NISBCE_3)) = 0.
-!   VAF(LISBCE_3(1:NISBCE_3)) = 0.
+!   UAF(LISBCE_3(1:NISBCE_3)) = 0.  
+!   VAF(LISBCE_3(1:NISBCE_3)) = 0.  
 
 !
 !--1 SOLID BOUNDARY EDGE-------------------------------------------------------|
@@ -284,7 +368,7 @@
              UAF(I)=UNTMP*COS(ANGLEQ(J))-VNTMP*SIN(ANGLEQ(J))
              VAF(I)=UNTMP*SIN(ANGLEQ(J))+VNTMP*COS(ANGLEQ(J))
                GOTO 21
-               END IF
+               END IF 
              END DO
             ELSE IF(RIVER_INFLOW_LOCATION == 'edge') THEN
              DO J=1,NUMQBC
@@ -299,45 +383,73 @@
                END IF
              END DO
            END IF
+            
+           END IF 
 
+#          if defined (THIN_DAM)
+           IF(NBE_DAM(I) == 0)THEN
+#          endif
+
+           UI= UAF(I)*(SIN(ALPHA1))**2-VAF(I)*SIN(ALPHA1)*COS(ALPHA1)
+           VI=-UAF(I)*SIN(ALPHA1)*COS(ALPHA1)+VAF(I)*(COS(ALPHA1))**2
+           UAF(I)=UI
+           VAF(I)=VI
+
+!!#          if defined (WET_DRY)
+!!           UI= UAS(I)*(SIN(ALPHA1))**2-VAS(I)*SIN(ALPHA1)*COS(ALPHA1)
+!!           VI=-UAS(I)*SIN(ALPHA1)*COS(ALPHA1)+VAS(I)*(COS(ALPHA1))**2
+!!           UAS(I)=UI
+!!           VAS(I)=VI
+!!#          endif
+
+#          if defined (THIN_DAM)
+           ELSE
+               UNTMP=-UAF(I)*COS(ALPHA1)-VAF(I)*SIN(ALPHA1)
+               VNTMP=UAF(I)*SIN(ALPHA1)-VAF(I)*COS(ALPHA1)
+               IF(KDAM1(I)<=KBM1/2)UNTMP=UNTMP*KDAM1(I)/KBM1
+               UAF(I)=-UNTMP*COS(ALPHA1)+VNTMP*SIN(ALPHA1)
+               VAF(I)=-UNTMP*SIN(ALPHA1)-VNTMP*COS(ALPHA1)
            END IF
-
-!Q&C< commented on 06/22/04
-!           UI= UAF(I)*(SIN(ALPHA1))**2-VAF(I)*SIN(ALPHA1)*COS(ALPHA1)
-!           VI=-UAF(I)*SIN(ALPHA1)*COS(ALPHA1)+VAF(I)*(COS(ALPHA1))**2
-!           UAF(I)=UI
-!           VAF(I)=VI
-
-#          if defined (WET_DRY)
-!           UI= UAS(I)*(SIN(ALPHA1))**2-VAS(I)*SIN(ALPHA1)*COS(ALPHA1)
-!           VI=-UAS(I)*SIN(ALPHA1)*COS(ALPHA1)+VAS(I)*(COS(ALPHA1))**2
-!           UAS(I)=UI
-!           VAS(I)=VI
-!           UAS(I)=UAF(I)
-!           VAS(I)=VAF(I)
 #          endif
 
 21        CONTINUE
           END IF
        END DO
 
+!!# if defined (THIN_DAM)
+!!    DO I=1,NT
+!!      IF(CLP_CELL(I)==1)THEN
+!!        ALPHA1=CLP_ALPHA(I)
+!!        UNTMP=-UAF(I)*COS(ALPHA1)-VAF(I)*SIN(ALPHA1)
+!!        VNTMP=UAF(I)*SIN(ALPHA1)-VAF(I)*COS(ALPHA1)
+!!        IF(CLP_KDAM(I,1)==1)KDAM_TMP=KDAM1(CLP_KDAM(I,2))
+!!        IF(CLP_KDAM(I,1)==2)KDAM_TMP=(KDAM1(CLP_KDAM(I,2))+KDAM1(CLP_KDAM(I,2)))/2
+!!        IF(KDAM_TMP<=KBM1/2)UNTMP=UNTMP*KDAM_TMP/KBM1
+!!        UAF(I)=-UNTMP*COS(ALPHA1)+VNTMP*SIN(ALPHA1)
+!!        VAF(I)=-UNTMP*SIN(ALPHA1)-VNTMP*COS(ALPHA1)
+!!      END IF
+!!    END DO
+!!# endif
 
 !==============================================================================|
    CASE(3) !3-D Velocity Boundary Conditions                                   !
 !==============================================================================|
 
 !  GWC SPEED REPLACE NEXT 4 LINES
-!   UF(LISBCE_3(1:NISBCE_3),1:KBM1) = 0.
-!   VF(LISBCE_3(1:NISBCE_3),1:KBM1) = 0.
+!   UF(LISBCE_3(1:NISBCE_3),1:KBM1) = 0.  
+!   VF(LISBCE_3(1:NISBCE_3),1:KBM1) = 0.  
+
+      ! Suggest move the kbm1 loop inside 'if((i.eq.j1).or.(i.eq.j2)) then'
+
+      ! THIS SHOULD BE SAFE FOR MORE THAN ONE RIVER AT THE SAME NODE
+      ! OR EDGE
 
        do i= 1, n
          do k =1, kbm1
-!Q&C< commented on 06/22/04
-!          if(isbce(i).eq.3) then
-!           uf(i,k)=0.0_SP
-!           vf(i,k)=0.0_SP
-!          end if
-!Q&C> 06/22/04
+          if(isbce(i).eq.3) then
+           uf(i,k)=0.0_SP
+           vf(i,k)=0.0_SP
+          end if
 
           if(isbce(i).eq.1) then
           alpha1=alpha(i)
@@ -374,21 +486,26 @@
           end if
           end if
 
-!Q&C< commented on 06/22/04
-!          ui= uf(i,k)*(sin(alpha1))**2-vf(i,k)*sin(alpha1)*cos(alpha1)
-!          vi=-uf(i,k)*sin(alpha1)*cos(alpha1)+vf(i,k)*(cos(alpha1))**2
-!          uf(i,k)=ui
-!          vf(i,k)=vi
-
-#         if defined (WET_DRY)
-!          ui= us(i,k)*(sin(alpha1))**2-vs(i,k)*sin(alpha1)*cos(alpha1)
-!          vi=-us(i,k)*sin(alpha1)*cos(alpha1)+vs(i,k)*(cos(alpha1))**2
-!          us(i,k)=ui
-!          vs(i,k)=vi
-!          us(i,k)=uf(i,k)
-!           vs(i,k)=vf(i,k)
+#         if defined (THIN_DAM)
+          IF(NBE_DAM(I) == 0.OR.K > KDAM1(I))THEN
+!          IF(NBE_DAM(I) == 0)THEN
 #         endif
-!Q&C> 06/22/04
+
+          ui= uf(i,k)*(sin(alpha1))**2-vf(i,k)*sin(alpha1)*cos(alpha1)
+          vi=-uf(i,k)*sin(alpha1)*cos(alpha1)+vf(i,k)*(cos(alpha1))**2
+          uf(i,k)=ui
+          vf(i,k)=vi
+
+!!#         if defined (WET_DRY)
+!!          ui= us(i,k)*(sin(alpha1))**2-vs(i,k)*sin(alpha1)*cos(alpha1)
+!!          vi=-us(i,k)*sin(alpha1)*cos(alpha1)+vs(i,k)*(cos(alpha1))**2
+!!          us(i,k)=ui
+!!          vs(i,k)=vi
+!!#         endif
+
+#         if defined (THIN_DAM)
+          end if
+#         endif
 
 31        continue
           end if
@@ -398,8 +515,34 @@
 
 
 !==============================================================================|
-   CASE(4) !Blank                                                              !
+   CASE(4)                                                                     !
 !==============================================================================|
+# if defined (ICE)
+! hhu ice bc 2/8/2017
+!=Sea ice open boundary by Haoguo Hu=== hhu                                                    !
+! additional bc fix - afm 4/17/17
+! additional bc fix using Ice flux (UIARC_OBCN) - afm 11/13/17
+         DO I=1,IOBCN
+             I1 = I_OBC_N(I)
+             I2 = NEXT_OBC(I)
+!             IF(UARD_OBCN(I) > 0.0_SP) THEN       ! IF THE FLOW IS OUT OF THE DOMAIN
+             UIARD_OBCN(I) = -XFLUX_ICE_OBC(I)  ! ICE FLUX at open boudary cells
+             IF(UIARD_OBCN(I) > 0.0_SP) THEN       ! IF THE FLOW IS OUT OF THE DOMAIN
+                vicen(i1,:,:)= vicen(i2,:,:)
+                aicen(i1,:,:)= aicen(i2,:,:)
+                eicen(i1,:,:)= eicen(i2,:,:)
+                esnon(i1,:,:)= esnon(i2,:,:)
+                Tsfc(i1,:)= Tsfc(i2,:)
+                aice0(i1,:)= aice0(i2,:)
+                aice(i1,:)= aice(i2,:)
+                vice(i1,:)= vice(i2,:)
+                eice(i1,:)= eice(i2,:)
+                esno(i1,:)= esno(i2,:)
+            ENDIF
+          ENDDO
+!!==End sea ice open boundary=====
+!==============================================================================|
+# endif
 
 !==============================================================================|
    CASE(5) !!SOLID BOUNDARY CONDITIONS ON U AND V                              !
@@ -407,17 +550,16 @@
 
 
 !  GWC SPEED REPLACE NEXT 4 LINES
-!   U(LISBCE_3(1:NISBCE_3),1:KBM1) = 0.
-!   V(LISBCE_3(1:NISBCE_3),1:KBM1) = 0.
+!   U(LISBCE_3(1:NISBCE_3),1:KBM1) = 0.  
+!   V(LISBCE_3(1:NISBCE_3),1:KBM1) = 0.  
 
        do i= 1, n
          do k =1, kbm1
-!Q&C< commented on 06/22/04
-!          if(isbce(i).eq.3) then
-!          u(i,k)=0.0_SP
-!          v(i,k)=0.0_SP
-!          end if
-!Q&C> 06/22/04
+          if(isbce(i).eq.3) then
+          u(i,k)=0.0_SP
+          v(i,k)=0.0_SP
+          end if
+
           if(isbce(i).eq.1) then
           alpha1=alpha(i)
           if(numqbc.ge.1) then
@@ -453,21 +595,26 @@
           end if
           end if
 
-!Q&C< commented on 06/22/04
-!          ui= u(i,k)*(sin(alpha1))**2-v(i,k)*sin(alpha1)*cos(alpha1)
-!          vi=-u(i,k)*sin(alpha1)*cos(alpha1)+v(i,k)*(cos(alpha1))**2
-!          u(i,k)=ui
-!          v(i,k)=vi
-
-#         if defined (WET_DRY)
-!          ui= us(i,k)*(sin(alpha1))**2-vs(i,k)*sin(alpha1)*cos(alpha1)
-!          vi=-us(i,k)*sin(alpha1)*cos(alpha1)+vs(i,k)*(cos(alpha1))**2
-!          us(i,k)=ui
-!          vs(i,k)=vi
-!          us(i,k)=u(i,k)
-!          vs(i,k)=v(i,k)
+#         if defined (THIN_DAM)
+          IF(NBE_DAM(I) == 0.OR.K > KDAM1(I))THEN          
+!          IF(NBE_DAM(I) == 0)THEN
 #         endif
-!Q&C> 06/22/04
+
+          ui= u(i,k)*(sin(alpha1))**2-v(i,k)*sin(alpha1)*cos(alpha1)
+          vi=-u(i,k)*sin(alpha1)*cos(alpha1)+v(i,k)*(cos(alpha1))**2
+          u(i,k)=ui
+          v(i,k)=vi
+
+!!#         if defined (WET_DRY)
+!!          ui= us(i,k)*(sin(alpha1))**2-vs(i,k)*sin(alpha1)*cos(alpha1)
+!!          vi=-us(i,k)*sin(alpha1)*cos(alpha1)+vs(i,k)*(cos(alpha1))**2
+!!          us(i,k)=ui
+!!          vs(i,k)=vi
+!!#         endif
+
+#         if defined (THIN_DAM)
+          END IF
+#         endif
 
 51        continue
           end if
@@ -508,66 +655,85 @@
 # if defined(FABM)
          IF (FABM_MODEL) CALL UPDATE_RIVERS(IntTime,QDIS,FABMR=FABMDIS)
 # endif
-# if !defined(SEDIMENT) && !defined(WATER_QUALITY)
+# if !defined(SEDIMENT) && !defined(WATER_QUALITY) 
          CALL UPDATE_RIVERS(IntTime,QDIS,TEMP=TDIS,SALT=SDIS)
-# endif  
-
+# endif	 
+                  
          QDIS    = QDIS*RAMP
          
 !#  if defined (WATER_QUALITY)
-!        DO N1 = 1, NB
-!           ! NOT YET OPERATIONAL!!!
-!           WDIS(:,N1) = UFACT*DWDIS(:,N1,L1) + FACT*DWDIS(:,N1,L2)
-!        END DO
+!         DO N1 = 1, NB
+!            ! NOT YET OPERATIONAL!!!
+!            WDIS(:,N1) = UFACT*DWDIS(:,N1,L1) + FACT*DWDIS(:,N1,L2)
+!         END DO
 !#  endif
-        
-     END IF
-
+         
+      END IF
+ 
 !-----Plume Dischage----------------------------
 !  Added by Qin  05/03/2019
 
 # if defined(PLUME)
-# if !defined (PLUME_CALCULATED)
-    IF(NUMPLM_GL .GT. 0)  THEN
-      CALL UPDATE_PLUMES(IntTime,FLXPLM,VDISTPLM,TEMP=TPLM,SALT=SPLM)  
+<<<<<<< HEAD
+      IF(NUMPLM_GL .GT. 0)  THEN
+        CALL UPDATE_PLUMES(IntTime,QPLMDIS,TEMP=TPLMDIS,SALT=SPLMDIS)  
 # if defined(FABM)
-      CALL UPDATE_PLUMES(IntTime,FLXPLM,VDISTPLM,FABMR=FABMPLM)  ! needs to double check
+        IF (FABM_MODEL) CALL UPDATE_PLUMES(IntTime,QPLMDIS,FABMR=FABMPLMDIS)  ! needs to double check
 # endif   
-      FLXPLM    = FLXPLM*RAMP         
-    END IF
-# else
-    CALL  UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PT=TPLM,PS=SPLM)
-# if defined (FABM)
-      IF (FABM_MODEL) CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PTR=FABMPLM)
+      END IF
+!  call plume model,  the case of not-call-plume-model is not ready.
+!  Qin, 14/04/2019
+       CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PT=TPLM,PS=SPLM)
+# if defined(FABM)
+       IF (FABM_MODEL) CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PTR=FABMPLM)
 # endif
-# endif
+=======
+#   if !defined (PLUME_CALCULATED)
+      IF(NUMPLM_GL .GT. 0)  THEN
+        CALL UPDATE_PLUMES(IntTime,FLXPLM,VDISTPLM,TEMP=TPLM,SALT=SPLM)  
+#     if defined(FABM)
+        CALL UPDATE_PLUMES(IntTime,FLXPLM,VDISTPLM,FABMR=FABMPLM)  ! needs to double check
+#     endif   
+        FLXPLM    = FLXPLM*RAMP
+      END IF
+#   else
+#     if defined(FABM)
+       CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PT=TPLM,PS=SPLM)
+       IF (FABM_MODEL) CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PTR=FABMPLM)
+#     else
+       CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PT=TPLM,PS=SPLM)
+#     endif
+#   endif
+>>>>>>> 027c5fd (PLUME changes)
 # endif   
 !----------------------------------      
+      
+      IF (WIND_ON) THEN
+         IF (WIND_TYPE == SPEED)THEN
+            CALL UPDATE_WIND(IntTime,UUWIND,VVWIND)
+            
+            CALL ASIMPLE_DRAG(UUWIND,VVWIND,WUSURF,WVSURF)
 
+         ELSEIF(WIND_TYPE == STRESS)THEN
+            CALL UPDATE_WIND(IntTime,WUSURF,WVSURF)
+         END IF
+         
 
-     IF (WIND_ON) THEN
+         ! For output only - don't divide by density
+         WUSURF_save = WUSURF * RAMP
+         WVSURF_save = WVSURF * RAMP
 
-        IF (WIND_TYPE == SPEED)THEN
-           CALL UPDATE_WIND(IntTime,UUWIND,VVWIND)
-           
-           CALL ASIMPLE_DRAG(UUWIND,VVWIND,WUSURF,WVSURF)
-           
-        ELSEIF(WIND_TYPE == STRESS)THEN
-           CALL UPDATE_WIND(IntTime,WUSURF,WVSURF)
-        END IF
-        
-        ! For output only - don't divide by density
-        WUSURF_save = WUSURF * RAMP
-        WVSURF_save = WVSURF * RAMP
-        
-        
-        WUSURF = -WUSURF * RAMP * 0.001_SP
-        WVSURF = -WVSURF * RAMP * 0.001_SP
-        
-     END IF
+         ! Divide by density 
+         WUSURF = -WUSURF * RAMP *0.001_SP
+         WVSURF = -WVSURF * RAMP *0.001_SP
+         
+         ! MAJOR MISTAKE: NEED THE NEGATIVE SIGN FOR THE INTERNAL
+         ! STEP WIND STRESS
 
-# if !defined (HEATING_CALCULATED) &&!defined (HEATING_SOLAR)
-     IF (HEATING_ON) THEN
+      END IF
+      
+# if !defined (HEATING_CALCULATED) && !defined (HEATING_SOLAR)
+      IF (HEATING_ON) THEN
          CALL UPDATE_HEAT(IntTime,SWRAD_WATTS,WTSURF_WATTS)
          
          ! LOAD INTO THES VARIABLE TO SAVE THE FORCING IN THE CORRECT UNITS
@@ -604,8 +770,8 @@
 	   SPCP=4.2174E3_SP
            ROSEA = 1.023E3_SP
            SPRO = SPCP*ROSEA
-	 ELSE  
-           SPCP=4.186E3_SP
+         ELSE
+           SPCP= 4.186E3_SP
            ROSEA = 1.000E3_SP
            SPRO = SPCP*ROSEA
 	 END IF  
@@ -623,6 +789,7 @@
 # endif      
 # if defined (HEATING_SOLAR)
       IF (HEATING_SOLAR_ON) THEN
+      !EJA edit - add HS,HL,RLN - 05/03/2016
          CALL UPDATE_HEAT_SOLAR(IntTime,SWRAD_WATTS,WTSURF_WATTS,HSENS_WATTS,HLAT_WATTS,LWRAD_WATTS)
          
          ! LOAD INTO THES VARIABLE TO SAVE THE FORCING IN THE CORRECT UNITS
@@ -633,10 +800,11 @@
          HLAT_WATTS = HLAT_WATTS * RAMP
          LWRAD_WATTS = LWRAD_WATTS * RAMP
 
-         ROSEA1 = (-.0057)*T1(:,1)*T1(:,1) + 0.0249*T1(:,1) + 1000.
+         ROSEA1 = (-.0057_SP)*T1(:,1)*T1(:,1) + 0.0249_SP*T1(:,1) + 1000.0_SP
          !IF(TWAT .LT. 3.9) WRITE(IPT,*)'WATER TEMP BELOW 4 C, BEWARE DENSITY CALCULATION!, TWAT = ',TWAT
          !IF(TWAT .GT. 30.1) WRITE(IPT,*)'WATER TEMP ABOVE 30 C, BEWARE DENSITY CALCULATION!, TWAT = ',TWAT
-         SPCP  = 4186.
+         SPCP  = 4186.0_SP
+         !SPRO  = SPCP*ROSEA
          !SPRO  = SPCP*ROSEA
          SPRO1  = SPCP*ROSEA1
                     
@@ -655,11 +823,11 @@
 
       END IF
 # endif      
-
-
-     IF (PRECIPITATION_ON) THEN
-        CALL UPDATE_PRECIPITATION(IntTime,Qprec,Qevap)
-     END IF
+      
+      IF (PRECIPITATION_ON) THEN
+         CALL UPDATE_PRECIPITATION(IntTime,Qprec,Qevap)
+         ! NO RAMP FOR PRECIP/EVAP
+      END IF
 
 
 # if defined (WAVE_CURRENT_INTERACTION) && (WAVE_OFFLINE)
@@ -667,50 +835,70 @@
          CALL UPDATE_WAVE(IntTime,WHS,WDIR,WPER,WLENGTH,WPER_BOT,WUB_BOT)
       END IF
 # endif
+
 # if defined (OFFLINE_SEDIMENT)
       CALL UPDATE_OFFLINE_FORCING(IntTime,offline_u,  offline_v, offline_w&
-                                        &,offline_s1, offline_el,offline_kh&
+                                        &,offline_s1, offline_t1,offline_el,offline_kh&
+# if defined (GOTM)
+                                        &,offline_teps &
+# else
+                                        &,offline_q2, offline_q2l &
+# endif
                                         &,offline_wn, offline_wc)
 # endif
+
 # if defined (FABM) && defined (OFFLINE_FABM)
       IF (FABM_MODEL) CALL UPDATE_OFFLINE_FABM_FORCING(IntTime,offlineb_u,  offlineb_v, offlineb_w&
                                         &,offlineb_s1,offlineb_t1, offlineb_el,offlineb_kh&
                                         &,offlineb_wn, offlineb_wc,offlineb_uard_obcn,offlineb_dtfa)
 # endif
 
+# if defined (OFFLINE_BIOLOGY)
+      CALL UPDATE_OFFLINE_BIOLOGY_FORCING(IntTime,offline_u,  offline_v, offline_w&
+                                        &,offline_s1, offline_t1,offline_el,offline_kh&
+# if defined (GOTM)
+                                        &,offline_teps &
+# else
+                                        &,offline_q2, offline_q2l &
+# endif
+                                        &,offline_wn, offline_wc)
+# endif
+
 !
 !-- Set Groundwater flux ------------------------------------------------------|
 !
-     
-     IF (GROUNDWATER_ON) THEN
-        CALL UPDATE_GROUNDWATER(IntTime,BFWDIS,GW_TEMP=BFWTMP,GW_SALT=BFWSLT)
-        BFWDIS = RAMP * BFWDIS
-     END IF
-
+      
+      IF (GROUNDWATER_ON) THEN
+         CALL UPDATE_GROUNDWATER(IntTime,BFWDIS,GW_TEMP=BFWTMP,GW_SALT=BFWSLT)
+         BFWDIS = RAMP * BFWDIS
+         ! DO NOT RAMP TEMP AND SALINITY
+      END IF
+      
 !==============================================================================|
-  CASE(9) !External Mode Surface BCs (River Flux/Wind Stress/Heat/Moist)      !
+   CASE(9) !External Mode Surface BCs (River Flux/Wind Stress/Heat/Moist)      !
 !==============================================================================|
 # if !defined (SEMI_IMPLICIT)
 !
 !-Freshwater Flux: Set  Based on Linear Interpolation Between Two Data Times---|
 !
 
-     IF(NUMQBC_GL .GT. 0) THEN
-        CALL UPDATE_RIVERS(ExtTime,QDIS2)
-        
-        QDIS2 = QDIS2*RAMP
-
-     END IF
-
+      IF(NUMQBC_GL .GT. 0) THEN
+         CALL UPDATE_RIVERS(ExtTime,QDIS2)
+         
+         QDIS2 = QDIS2*RAMP
+         
+      END IF
+      
 !
 !-- Set Precipitation/Evaporation/Surface Wind ---------------------------------|
 !
 
-   IF (PRECIPITATION_ON) THEN
-      CALL UPDATE_PRECIPITATION(ExtTime,Qprec2,Qevap2)
-   END IF
-
-   IF (WIND_ON) THEN
+      IF (PRECIPITATION_ON) THEN
+         CALL UPDATE_PRECIPITATION(ExtTime,Qprec2,Qevap2)
+         ! NO RAMP FOR PRECIP/EVAP
+      END IF
+      
+      IF (WIND_ON) THEN
 
          IF (WIND_TYPE == SPEED)THEN
             CALL UPDATE_WIND(ExtTime,UUWIND,VVWIND)
@@ -727,26 +915,26 @@
          WVSURF_save = WVSURF2 * RAMP
 # endif	 
 
-      WUSURF2 = WUSURF2 * RAMP * 0.001_SP
-      WVSURF2 = WVSURF2 * RAMP * 0.001_SP
-      
-   END IF
-
+         WUSURF2 = WUSURF2 * RAMP *0.001_SP
+         WVSURF2 = WVSURF2 * RAMP *0.001_SP
+         
+      END IF
+   
 !
 !-- Set Groundwater flux ------------------------------------------------------|
 !
 
-   IF (GROUNDWATER_ON) THEN
-      CALL UPDATE_GROUNDWATER(ExtTime,BFWDIS2)
-      BFWDIS2 = RAMP * BFWDIS2
-   END IF
-# endif
+      IF (GROUNDWATER_ON) THEN
+         CALL UPDATE_GROUNDWATER(ExtTime,BFWDIS2)
+         BFWDIS2 = RAMP * BFWDIS2
+      END IF
+# endif      
    END SELECT
-
+   
    if(dbg_set(dbg_sbr)) write(ipt,*)&
-        & "End: bcond_gcy"
-
-   END SUBROUTINE BCOND_GCY
+        & "End: bcond_gcn"
+   
+ END SUBROUTINE BCOND_GCN
 !==============================================================================|
 
 
