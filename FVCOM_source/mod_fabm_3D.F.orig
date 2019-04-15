@@ -1746,7 +1746,6 @@ END SUBROUTINE FABM_MIXING
   FABM_FRESH=FABM_ALL(:,:,IFABM)
 
 
-<<<<<<< HEAD
   IF (.NOT. model%interior_state_variables(IFABM)%no_river_dilution) THEN
       IF(RIVER_TS_SETTING == 'calculated') THEN
          IF(RIVER_INFLOW_LOCATION == 'node') THEN
@@ -1783,48 +1782,18 @@ END SUBROUTINE FABM_MIXING
         IF (DBG_SET(DBG_VRB)) WRITE (IPT,*) "FABM Variable "//TRIM(model%interior_state_variables(IFABM)%name)//" is not in river forcing file and will not be diluted"
     END IF
  !
-=======
-  IF(RIVER_TS_SETTING == 'calculated') THEN
-     IF(RIVER_INFLOW_LOCATION == 'node') THEN
-        IF(NUMQBC > 0) THEN
-           DO J=1,NUMQBC
-              JJ=INODEQ(J)
-              STPOINT=FABMDIS(J,IFABM)
-              DO K=1,KBM1
-                 FABM_FRESH(JJ,K)=FABMDIS(J,IFABM)
-                 XFLUX(JJ,K,IFABM)=XFLUX(JJ,K,IFABM) - QDIS(J)*VQDIST(J,K)*STPOINT
-              END DO
-           END DO
-        END IF
-     ELSE IF(RIVER_INFLOW_LOCATION == 'edge') THEN
-        IF(NUMQBC > 0) THEN
-           DO J=1,NUMQBC
-              J1=N_ICELLQ(J,1)
-              J2=N_ICELLQ(J,2)
-              STPOINT=FABMDIS(J,IFABM)!!ASK LIU SHOULD THIS BE STPOINT1(J1)/STPOINT2(J2)
-              DO K=1,KBM1
-                 FABM_FRESH(J1,K)=FABMDIS(J,IFABM)
-                 FABM_FRESH(J2,K)=FABMDIS(J,IFABM)
-                 XFLUX(J1,K,IFABM)=XFLUX(J1,K,IFABM)-  &
-                      QDIS(J)*RDISQ(J,1)*VQDIST(J,K)*STPOINT
-                 XFLUX(J2,K,IFABM)=XFLUX(J2,K,IFABM)-  &
-                      QDIS(J)*RDISQ(J,2)*VQDIST(J,K)*STPOINT
-              END DO
-           END DO
-        END IF
-     END IF
-  END IF
-  !
  !--------------------------------Plum flux part----------------------
 ! Added by Qin 07/03/2019
 # if  defined (PLUME)
+# if defined(PLUME_CALCULATED)
   DO I=1,M
        DO K=1,KBM1
   !             FABM_FRESH(JJ,K)=FABMDIS(J,K,IFABM)
                XFLUX(I,K,IFABM)=XFLUX(I,K,IFABM) - FLXPLM(I,K)*VDISTPLM(I,K)*FABMPLM(I,K,IFABM)
          END DO
      END DO
->>>>>>> 313bac4 (Remove those setences related to direct plume release)
+# endif
+# endif
 
 
   ! The horizontal term of advection is neglected here for Open boundary locations
@@ -2169,22 +2138,35 @@ END SUBROUTINE FABM_MIXING
 !RJT  END IF
 ! lwang
 !---------------------------------------------------------------------
-<<<<<<< HEAD
-# endif 
-! End of ! defined(MPDATA)
-=======
 !--------------------------------Plum flux part----------------------
 ! Added by Qin 07/03/2019
 # if defined (PLUME)
+<<<<<<< HEAD
+# if !defined (PLUME_CALCULATED)
+   IF (NUMPLM>0) THEN
+     DO J=1,NUMPLM
+          JJ=INODEPLM(J)
+           DO K=1,KBM1
+               XFLUX(JJ,K,IFABM)=XFLUX(JJ,K,IFABM) - FLXPLM(J,K)*VDISTPLM(J,K)*FABMPLM(J,K,IFABM)
+            END DO
+      END DO
+   END IF
+# else
+=======
+# if defined(PLUME_CALCULATED)
+>>>>>>> 70a1f9c (plume_calculated is defined when the output variables fromthe plume model is used)
    DO I=1,M
          DO K=1,KBM1
               XFLUX(I,K,IFABM)=XFLUX(I,K,IFABM) - FLXPLM(I,K)*VDISTPLM(I,K)*FABMPLM(I,K,IFABM)
          END DO
    END DO
 # endif
-
 # endif
->>>>>>> 313bac4 (Remove those setences related to direct plume release)
+<<<<<<< HEAD
+
+=======
+>>>>>>> 70a1f9c (plume_calculated is defined when the output variables fromthe plume model is used)
+# endif
 
   !--Update Variables------------------------------------------------------------!
   !
