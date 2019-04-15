@@ -640,6 +640,15 @@ SUBROUTINE ADV_S
         END IF
      END IF
   END IF
+  !---------------------Plume flux part-----------------------------------------
+  ! Added by Qin 05/03/2019
+# if defined(PLUME)
+   DO I=1,M
+         DO K=1,KBM1
+             XFLUX(I,K)=XFLUX(I,K) - FLXPLM(I,K)*VDISTPLM(I,K)*SPLM(I,K)  
+         END DO
+   END DO
+# endif
 
   ! -------------------------------------------------------------------
   !        The horizontal term of advection is neglected here
@@ -1053,6 +1062,15 @@ SUBROUTINE ADV_S
         END IF
      END IF
   END IF
+!--  For Plume influx ------------------------------------
+# if defined(PLUME)
+   DO I=1,M
+         DO K=1,KBM1
+             XFLUX(I,K)=XFLUX(I,K) - FLXPLM(I,K)*VDISTPLM(I,K)*SPLM(I,K)  
+         END DO
+   END DO
+# endif
+
 !---------------------------------------------------------------------
 ! Her slutter if !defined (MPDATA). Litt rart at det ikke skjer et hakk lenger ned?
 # endif
