@@ -35,6 +35,9 @@ MODULE MOD_PLUME
     USE ALL_VARS
     USE MOD_UTILS
     USE MOD_PREC
+# if defined (MULTIPROCESSOR)
+    USE MOD_PAR
+# endif
     IMPLICIT NONE
     SAVE
 	
@@ -47,10 +50,6 @@ MODULE MOD_PLUME
     REAL(SP)    :: PLUME_DIFFUSOR_DISTANCE       ! Distance between diffusors
     REAL(SP)    :: PLUME_DIFFUSOR_RADIUS         ! Radius of the plume source
     REAL(SP)    :: PLUME_DIFFUSOR_DEPTH          ! Depth between bottom and diffusor
-    REAL(SP)    :: PLUME_RELEASE_TEMPERATURE     ! PLUME DISCHARGE TEMPERATURE
-    REAL(SP)    :: PLUME_RELEASE_SALINITY        ! PLUME DISCHARGE SALINITY
-    REAL(SP)    :: PLUME_RELEASE_CONCENTRATION   ! PLUME DISCHARGE CONCENTRATION
-    REAL(SP)    :: PLUME_RELEASE_FLUX            ! PLUME DISCHARGE VOLUMN FLUX
     REAL(SP)    :: PIPE_RADIUS                   ! RADIUS OF THE PIPE PROVIDING THE VOLUMEFLUX
 
     NAMELIST /NML_PLUME_CALCULATED/            &
@@ -134,16 +133,10 @@ MODULE MOD_PLUME
 ! Allocate variables output from the plume model	
 !==============================================================================|
       SUBROUTINE PLUME_CALCULATE_INIT
-#  if defined(FABM)
-    USE MOD_FABM_DATA
-#  endif 
-      ALLOCATE(FLXPLM(0:MT,KB)) ;              FLXPLM     =   ZERO ! 
-      ALLOCATE(VDISTPLM(0:MT,KB)) ;            VDISTPLM   =   ZERO ! 
-      ALLOCATE(TPLM(0:MT,KB)) ;                TPLM       =   ZERO ! 
-      ALLOCATE(SPLM(0:MT,KB)) ;                SPLM       =   ZERO !
-# if defined(FABM)
-      ALLOCATE(FABMPLM(0:MT,KB,SIZE(FABM_ALL(0,0,:)))) ; FABMPLM    =   ZERO !
-# endif   
+      ALLOCATE(FLXPLM(0:MT,KB)) ;            FLXPLM     =   ZERO !  
+      ALLOCATE(TPLM(0:MT,KB)) ;              TPLM       =   ZERO ! 
+      ALLOCATE(SPLM(0:MT,KB)) ;              SPLM       =   ZERO !
+
 !==============================================================================|
       END SUBROUTINE PLUME_CALCULATE_INIT
 !==============================================================================|
@@ -207,153 +200,206 @@ MODULE MOD_PLUME
       USE EQS_OF_STATE
       USE ALL_VARS
       USE MOD_UTILS
-      USE MOD_PAR, ONLY: NGID
+# if defined (MULTIPROCESSOR)
+      USE MOD_PAR
+# endif
 # if defined (FABM)
       USE MOD_FABM_DATA
 # endif
-
-      IMPLICIT NONE
-      REAL(SP)                                            :: SOURCE_MOM, SOURCE_VOL, SOURCE_BUOY
-      REAL(SP)                                            ::          PLUME_AREA,DST,PTEMP,PSALT
-      REAL(SP), INTENT(OUT), DIMENSION(0:MT,KB), OPTIONAL ::                               PT,PS
-      REAL(SP), INTENT(OUT), ALLOCATABLE, OPTIONAL        ::                          PTR(:,:,:)
-      INTEGER,  INTENT(OUT), DIMENSION(0:MT,KB)           ::                               VDIST
-      REAL(SP), INTENT(OUT), DIMENSION(0:MT,KB)           ::                               PFLUX
-      INTEGER                                             ::       A,B,C,INS,IFABM,INODE,K,I,J,O
-      INTEGER                                             ::                  II,JJ,FAB,NEWROUND
-      REAL(SP)                                            :: INIT_V,entcoef,AREA,radius,Wn,Vn,Fn
-      REAL(SP), DIMENSION(KB)                             ::             PDEPTH,NN,TEMPPF,SALTPF
-      REAL(SP), ALLOCATABLE                               ::             FABMPF(:,:), PTRACER(:)
-      INTEGER,  ALLOCATABLE                               ::             TMP(:), RELEASENODES(:)
-      REAL(SP), ALLOCATABLE                               ::            WEIGHT_TMP(:), WEIGHT(:)
-      LOGICAL                                             ::                           RUN_PLUME
-      REAL(SP), DIMENSION(1:2)                            ::            PRHO, PRESSURE, PTT, PSS
-   
+# if defined (FABM)
+      REAL(SP), ALLOCATABLE                   ::  FABMPF(:,:),PTRACER(:),PTR_TMP(:,:)
+      REAL(SP), ALLOCATABLE                   ::                           PTR(:,:,:)
+      INTEGER                                 ::                            IFABM,FAB
+# endif
       ! Diffusor stuff
       REAL(SP) :: PLUME_SOURCE, PLUME_ANGLE, PLUME_MERGING_DISTANCE
       REAL(SP) :: Rdiff, Wdiff, PI, DIFF_VOL, DIFF_MOM, DIFF_BUOY
       REAL(SP) :: PSF, PTF, TOT_PLUMES
       REAL(SP), ALLOCATABLE                               :: PTRF(:)
 
-      ! TODO: MOD_PLUME does, at the moment, not support multiple FABM variables, eventhough
-      !       it likes to give that impression.
+      ! MODEL ON OR OFF
+      LOGICAL                                 ::                            RUN_PLUME
 
 !     Constants and ICs
       entcoef      = 0.07_SP  ! The exact value of this parameter is disputed
       PI           = 4.0_SP*ATAN(1.0_SP)
+      RUN_PLUME    = .TRUE.   ! This should be false, or?
 
-!===========Added by Qin, need to be modified=================================
-      INODE        =    PLUME_RELEASE_NODEID     
-      INS          =    PLUME_RELEASE_SIGMALAYER      
-      PTEMP        =    PLUME_INITIAL_TEMPERATURE     
-      PSALT        =    PLUME_INITIAL_SALINITY        
-      SOURCE_VOL   =    PLUME_INITIAL_VOLUME_FLUX
-      SOURCE_MOM   =    SOURCE_VOL/(PIPE_RADIUS)
 !=================================================================================
 ! Initializing the code. The routine will only be run for the plume release node.
-      RUN_PLUME    = .FALSE.
-      DO I = 1,M
-         IF (INODE.EQ.NGID(I)) THEN
-            RUN_PLUME = .TRUE.
-            INODE     = I
-            EXIT
+# if defined (MULTIPROCESSOR)
+      IF(SERIAL) THEN
+         IF (MSR) THEN
+            ALLOCATE(PS, SOURCE = S1)
+            ALLOCATE(PT, SOURCE = T1)
          END IF
-      END DO
-
-      PFLUX = ZERO
-      VDIST = ZERO
-    
-!     Initializing plume temperature and salinity
-!     Filling vectors with data
-      IF ((PRESENT(PT)).AND.(PRESENT(PS))) THEN
-         PT          = T1
-         PS          = S1
-      END IF
-# if defined (FABM)
-      IF (PRESENT(PTR)) THEN
-         IFABM       = SIZE(FABM_ALL(1,1,:))
-         ALLOCATE(PTR, SOURCE = FABM_ALL)
-         ALLOCATE(FABMPF(KB,IFABM))
-         ALLOCATE(PTRACER(IFABM))
-         PTRACER     = PLUME_INITIAL_CONCENTRATION
+      ELSE IF (PAR) THEN
+         IF (MSR) THEN
+            ALLOCATE(PS(0:MGL,KB), stat=ierr);       PS = 0.0_SP
+            ALLOCATE(PT(0:MGL,KB), stat=ierr);       PT = 0.0_SP
+         END IF
+         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,S1,PS)
+         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,T1,PT)
       END IF
 # endif
-      
+
+! FABM stuff
+# if defined (FABM)
+      IFABM = SIZE(FABM_ALL,3)
+      IF (MSR) THEN
+         ALLOCATE(FABMPF(KB,IFABM));       FABMPF  = ZERO
+         ALLOCATE(PTRACER(IFABM));         PTRACER = ZERO
+      END IF
+# endif
+
+! General stuff we need when we use the model - feels bad to do this so often
+! =================================================================================
+# if defined (MULTIPROCESSOR)
+      IF (SERIAL) THEN
+         IF (MSR) THEN
+            ALLOCATE(ART1_G,  SOURCE = ART1)
+            ALLOCATE(GRAV_GN, SOURCE = GRAV_N)
+            ALLOCATE(ZZ_G,    SOURCE = ZZ)
+            ALLOCATE(D_G,     SOURCE = D)
+            ALLOCATE(DZZ_G,   SOURCE = DZZ)
+            ALLOCATE(RHO1_G,  SOURCE = RHO1)
+            ALLOCATE(NBSN_G,  SOURCE = NBSN)
+            ALLOCATE(NTSN_G,  SOURCE = NTSN)
+         END IF
+
+      ELSE IF (PAR) THEN
+       ! Make room for the variables
+         IF (MSR) THEN
+            ALLOCATE(ART1_G(0:MGL),stat=ierr);              ART1_G    = ZERO
+            ALLOCATE(GRAV_GN(0:MGL),stat=ierr);             GRAV_GN   = ZERO
+            ALLOCATE(ZZ_G(0:MGL,KB),stat=ierr);             ZZ_G      = ZERO
+            ALLOCATE(D_G(0:MGL),stat=ierr);                 D_G       = ZERO
+            ALLOCATE(DZZ_G(0:MGL,KB),stat=ierr);            DZZ_G     = ZERO
+            ALLOCATE(NBSN_G(0:MGL,SIZE(NBSN,2)),stat=ierr); NBSN_G    = ZERO
+            ALLOCATE(NTSN_G(0:MGL),stat=ierr);              NTSN_G    = ZERO
+            ALLOCATE(RHO1_G(0:MGL,KB),stat=ierr);           RHO1_G    = ZERO  
+         END IF
+
+       ! Physical variables
+         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,GRAV_N,GRAV_GN)
+         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,RHO1,RHO1_G)
+         
+       ! Some grid stuff
+       ! Depth/sigma layer information
+         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,ZZ,ZZ_G)
+         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,D,D_G)
+         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,DZZ,DZZ_G)
+
+       ! Grid IDs and connectivity
+         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,ART1,ART1_G)
+         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,NTSN,NTSN_G)
+
+         ALLOCATE(NBSNg(SIZE(NBSN,1),SIZE(NBSN,2)));        NBSNg     = ZERO
+         DO I = 1,M
+            NBSNg(I,:) = NGID_X(NBSN(I,:))
+         END DO
+         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,NBSNg,NBSN_G)
+         DEALLOCATE(NBSNg)
+      END IF
+# endif
+      IF (MSR) THEN
+         ALLOCATE(PFLUX_G(0:MGL,KB),stat=ierr);             PFLUX_G   = ZERO
+      END IF
+
+!   Not sure how else to find the global number of plumes...
+! =================================================================
+    IF (MSR) THEN
+    IF(NUMPLM_GL>0) THEN
+    DO II = 1,NUMPLM_GL
+       INODE        =   INODEPLM(II)
+       INS          =   KSIGPLM(II)
+       PTEMP        =   TPLMDIS(II)
+       PSALT        =   SPLMDIS(II)
+       SOURCE_VOL   =   QPLMDIS(II)
+
+       IF (SOURCE_VOL.GT.0) THEN
+          RUN_PLUME = .TRUE.
+       ELSE
+          RUN_PLUME = .FALSE.
+       END IF
+       SOURCE_MOM   =   SOURCE_VOL/(PIPE_RADIUS)
+
+# if defined (FABM)
+       PTRACER      =   FABMPLMDIS(II,:)
+# endif
+
+! =============================================================================
+!     End of initialization, the code will now run the plume part of the code
+!     if the volume flux is greater than zero, or continue otherwise.
+! =============================================================================
       IF (RUN_PLUME) THEN
 ! ---
 ! Calculate the buoyancy flux based on input salt and temperature
 ! ---
          PRESSURE = -GRAV_N(INODE)*1.025_SP*(ZZ(INODE,INS)*D(INODE))*0.1_SP 
-     ! H: I could not get this function work for scalar T and S, hence
-     !    passing the variables as vectors instead.
-        PTT      = PTEMP
-        PSS      = PSALT
 
-       SELECT CASE(SEA_WATER_DENSITY_FUNCTION)
-        CASE(SW_DENS1)
-        CALL FOFONOFF_MILLARD(PSS,PTT,PRESSURE,0.0_SP,PRHO)
+! Temporarilly store the initial plume temperature and salinity as vectors so
+! that we can use the sea water density functions to estimate the plume density.
+          PTT      = PT(INODE,INS)!PTEMP
+          PSS      = 100!PSALT
 
-       CASE(SW_DENS2)
-       CALL DENS2G(PSS,PTT,PRHO)
+          SELECT CASE(SEA_WATER_DENSITY_FUNCTION)
+          CASE(SW_DENS1)
+            CALL FOFONOFF_MILLARD(PSS,PTT,PRESSURE,0.0_SP,PRHO)
 
-       CASE(SW_DENS3)      
-       CALL JACKET_MCDOUGALL(PSS,PTT,PRESSURE,PRHO)                                                   
+          CASE(SW_DENS2)
+            CALL DENS2G(PSS,PTT,PRHO)
 
-       CASE DEFAULT
-       CALL FATAL_ERROR("INVALID DENSITY FUNCTION SELECTED:",&
+          CASE(SW_DENS3)      
+            CALL JACKET_MCDOUGALL(PSS,PTT,PRESSURE,PRHO)
+
+          CASE DEFAULT
+            CALL FATAL_ERROR("INVALID DENSITY FUNCTION SELECTED:",&
            & "   "//TRIM(SEA_WATER_DENSITY_FUNCTION) )
-       END SELECT
+          END SELECT
 
 ! --- 
 ! Estimate the buoyancy flux
 ! ---
-     SOURCE_BUOY = GRAV_N(INODE)*(RHO1(INODE,INS)-PRHO(1))*SIZE(RHO1(INODE,:))&
-           &/(SUM(RHO1(INODE,:))) * SOURCE_VOL
-     IF (SOURCE_BUOY.LT.0) THEN
-           CALL FATAL_ERROR("INVALID BUOYANCY FLUX, MOD_PLUME DOES NOT SUPPORT&
-           & SINKING PLUMES AT THE MOMENT.")
-     END IF
-
+          SOURCE_BUOY = GRAV_GN(INODE)*(RHO1_G(INODE,INS)-PRHO(1))*SIZE(RHO1_G(INODE,:))/(SUM(RHO1_G(INODE,:))) * SOURCE_VOL
+          IF (SOURCE_MOM.LT.0) THEN
+             CALL FATAL_ERROR("INVALID MOMENTUM FLUX, MOD_PLUME DOES ",&
+             &"NOT SUPPORT SINKING PLUMES (AT THE MOMENT).")
+          END IF
+          write(*,*) 'PRHO', PRHO
+          write(*,*) 'RHO1_G', RHO1_G(INODE,INS)
 !===========================================================================
 ! Buoyancy frequency, stolen from the gotm routine
 ! ----
-      DO K=2,KBM1
-         NN(K)       = -GRAV_N(INODE)*(RHO1(INODE,K-1)-RHO1(INODE,K))/(DZZ(INODE,K-1)*D(INODE))
-         IF (NN(K).LT.ZERO) THEN
-            NN(K)    = 0.0_SP
-         END IF
-         NN(K)       = SQRT(NN(K))
-      END DO
-      NN(1)          = 0.0_SP
-      NN(KB)         = 0.0_SP
-      PDEPTH         = DZZ(INODE,:)*D(INODE)
-
-
+          DO K=2,KBM1
+             NN(K)       = -GRAV_GN(INODE)*(RHO1_G(INODE,K-1)-RHO1_G(INODE,K))/(DZZ_G(INODE,K-1)*D_G(INODE))
+             IF (NN(K).LT.ZERO) THEN
+                NN(K)    = 0.0_SP
+             END IF
+             NN(K)       = SQRT(NN(K))
+          END DO
+          NN(1)          = 0.0_SP
+          NN(KB)         = 0.0_SP
+          PDEPTH         = DZZ_G(INODE,:)*D_G(INODE)
 
 !     Integrate from the input sigma layer, activate it
-      K              = INS    ! INPUT sigma layer
-      VDIST(INODE,K) = 1
+          K              = INS  ! INPUT sigma layer
 
 !     Interaction between plume and surroundings
-      IF ((PRESENT(PT)).AND.(PRESENT(PS))) THEN
-         TEMPPF(K)   = SOURCE_VOL*PTEMP
-         SALTPF(K)   = SOURCE_VOL*PSALT
-      END IF
+          TEMPPF(K)      = SOURCE_VOL*PTEMP
+          SALTPF(K)      = SOURCE_VOL*PSALT
 
 # if defined (FABM)
-      IF (PRESENT(PTR)) THEN
-         DO FAB = 1,IFABM
-            FABMPF(K,FAB)   = SOURCE_VOL*PTRACER(FAB)
-         END DO
-      END IF
+          DO FAB = 1,IFABM
+             FABMPF(INS,FAB)   = SOURCE_VOL*PTRACER(FAB)
+          END DO
 # endif
 
-      INIT_V = SOURCE_VOL
-
-      IF (PLUME_DIFFUSOR_ON) THEN
-!===========================================================================
-! Enhanced initial entrainment due to use of diffusors
-! ----
+          INIT_V = SOURCE_VOL
+          
+          IF (PLUME_DIFFUSOR_ON) THEN
+! ===========================================================================
+!             Enhanced initial entrainment due to use of diffusors
 ! ===========================================================================
          ! Must change the source terms to account for enhanced entrainment
          ! due to diffusors. We only account for the mixing due to the
@@ -363,7 +409,7 @@ MODULE MOD_PLUME
          ! the same direction.
 
          ! For a given line of plumes: When will they coalesce?
-         !                 Our answer: When they expand far enough to the
+         ! Our answer:                 When they expand far enough to the
          !                             sides, such that they grow into 
          !                             each other.
 
@@ -373,6 +419,7 @@ MODULE MOD_PLUME
          TOT_PLUMES           = PLUME_DIFFUSOR_UP + PLUME_DIFFUSOR_DOWN
          Rdiff                = PLUME_DIFFUSOR_RADIUS
          Wdiff                = SOURCE_VOL/(TOT_PLUMES*Rdiff**2)
+
          IF (Rdiff.GT.(PLUME_DIFFUSOR_DISTANCE/2)) THEN
             CALL FATAL_ERROR("The diffusor radius is bigger than the diffusor separation distance/2")
             !"
@@ -389,12 +436,10 @@ MODULE MOD_PLUME
          END IF
 
 # if defined (FABM)
-         IF (PRESENT(PTR)) THEN
-            ALLOCATE(PTRF(IFABM))
-            DO FAB = 1,IFABM
-               PTRF(FAB)   = DIFF_VOL*PTRACER(FAB)
-            END DO
-         END IF
+             ALLOCATE(PTRF(IFABM));    PTRF = ZERO
+             DO FAB = 1,IFABM
+                PTRF(FAB)   = DIFF_VOL*PTRACER(FAB)
+             END DO
 # endif
 
          ! Idea: Integrate these equations until they merge
@@ -428,7 +473,7 @@ MODULE MOD_PLUME
                END IF
 # endif
                
-               PFLUX(INODE,INS) = PFLUX(INODE,INS) - 2.0_SP*entcoef*SOURCE_MOM*PDEPTH(K)/10
+                PFLUX_G(INODE,INS) = PFLUX_G(INODE,INS) - 2.0_SP*entcoef*SOURCE_MOM*PDEPTH(K)/10.0_SP
                
                DIFF_VOL       = Wn
                DIFF_MOM       = Vn**(0.25_SP)
@@ -439,6 +484,7 @@ MODULE MOD_PLUME
             END DO
          END DO big
          
+         ! Let these diffusor-plumes update the initial conditions
          IF (PRESENT(PT)) THEN
             PTEMP    = PTF/DIFF_VOL
             PSALT    = PSF/DIFF_VOL
@@ -454,13 +500,13 @@ MODULE MOD_PLUME
          
          ! The area of the big plume should be TOT_PLUMES times bigger than the small ones
          ! Hence the radius should be SQRT(TOT_PLUMES) times bigger
-         Rdiff                = SQRT(TOT_PLUMES)*DIFF_VOL/DIFF_MOM
+             Rdiff            = SQRT(TOT_PLUMES)*DIFF_VOL/DIFF_MOM
 
          ! Now, assume that these plumes coalesce and form a perfect "superplume". This is
          ! the new input for the plume model.
-         SOURCE_VOL          = (Rdiff**2)*DIFF_MOM**2/DIFF_VOL    ! VOLsource  = r**2*w
-         SOURCE_MOM          = Rdiff*(DIFF_MOM**2/DIFF_VOL)       ! MOMsource  = rw
-         SOURCE_BUOY         = SOURCE_VOL*DIFF_BUOY/DIFF_VOL      ! BUOYsource = r**2*w*g'
+             SOURCE_VOL       = (Rdiff**2)*DIFF_MOM**2/DIFF_VOL ! VOLsource  = r**2*w
+             SOURCE_MOM       = Rdiff*(DIFF_MOM**2/DIFF_VOL)    ! MOMsource  = rw
+             SOURCE_BUOY      = SOURCE_VOL*DIFF_BUOY/DIFF_VOL   ! BUOYsource = r**2*w*g'
          
          ! Update the initial temperature-, salinity- and tracer-flux.
          IF ((PRESENT(PT)).AND.(PRESENT(PS))) THEN
@@ -476,9 +522,9 @@ MODULE MOD_PLUME
          END IF
 # endif
 
-         K = INS
-      END IF
-      ! INIT_V = SOURCE_VOL ! Storing the source volume flux for later
+             K = INS
+          END IF                ! PLUME_DIFFUSOR
+          INIT_V = SOURCE_VOL   ! Storing the source volume flux for later
 
 ! ======================================================================================
 !                         And then finally: The plume model
@@ -494,20 +540,27 @@ MODULE MOD_PLUME
          radius          = SOURCE_VOL/SOURCE_MOM
          PLUME_AREA      = PI*radius**2
 
-         IF (PLUME_AREA.GT.AREA) THEN
-            I = 0
-            outer: DO WHILE (PLUME_AREA.GT.AREA)
-               I = I+1
-               inner: DO J = 1,NTSN(RELEASENODES(I))
-                  O = NBSN(RELEASENODES(I),J)
-                  ! To avoid storing the same node twice
+          DO WHILE (.TRUE.)
+             K               = K-1
+             radius          = SOURCE_VOL/SOURCE_MOM
+             PLUME_AREA      = PI*radius**2
+             
+             IF (PLUME_AREA.GT.AREA) THEN
+                I = 0
+                outer: DO WHILE (PLUME_AREA.GT.AREA)
+                  I = I+1
+                  inner: DO J = 1,NTSN_G(RELEASENODES(I))
+                    O = NBSN_G(RELEASENODES(I),J)
+
+                  ! To avoid storing the same node twice in the RELEASENODES list
                   DO A = 1,SIZE(RELEASENODES)
                      IF (RELEASENODES(A).EQ.O) THEN
                         CYCLE inner
                      END IF
                   END DO
-                  VDIST(O,K) = 1
-                  AREA       = AREA+ART1(O)
+
+                  ! Adjust the area 
+                    AREA         = AREA+ART1_G(O)
 
                   ! Identify the nodes covering the rising plume, and store them
                   ALLOCATE(TMP(SIZE(RELEASENODES)+1))
@@ -532,7 +585,14 @@ MODULE MOD_PLUME
               CALL MOVE_ALLOC(WEIGHT_TMP, WEIGHT)
            END DO outer
         END IF
-        VDIST(RELEASENODES,K) = 1
+
+                ! We got this far, thus all of the nodes in the last NBSN were used, and they should
+                ! get their fair share of the flux
+                  ALLOCATE(WEIGHT_TMP(SIZE(RELEASENODES)))
+                  WEIGHT_TMP = ART1_G(INODE)/PLUME_AREA
+                  CALL MOVE_ALLOC(WEIGHT_TMP, WEIGHT)
+                END DO outer
+             END IF
         
         IF ((ISNAN(SOURCE_MOM)).OR.(K.EQ.1)) THEN
            ! Plume reached the top, releasing it there. (NB: Hydrostatically unstable...)
@@ -542,6 +602,7 @@ MODULE MOD_PLUME
                  PT(RELEASENODES(I),K)         = (TEMPPF(K+1)/SOURCE_VOL)
                  PS(RELEASENODES(I),K)         = (SALTPF(K+1)/SOURCE_VOL)
               END IF
+
 # if defined (FABM)
               IF (PRESENT(PTR)) THEN
                  DO FAB = 1,IFABM
@@ -554,10 +615,10 @@ MODULE MOD_PLUME
            EXIT
         END IF
 
-        ! Solving the plume model equations
-        Wn             = SOURCE_VOL    + 2.0_SP*entcoef*SOURCE_MOM*PDEPTH(K)
-        Vn             = SOURCE_MOM**4 + 2.0_SP*SOURCE_BUOY*SOURCE_VOL*PDEPTH(K)
-        Fn             = SOURCE_BUOY   - (NN(K)**2)*SOURCE_VOL*PDEPTH(K)
+           ! Solving the plume model equations if the plume is still rising
+             Wn             = SOURCE_VOL    + 2.0_SP*entcoef*SOURCE_MOM*PDEPTH(K)
+             Vn             = SOURCE_MOM**4 + 2.0_SP*SOURCE_BUOY*SOURCE_VOL*PDEPTH(K)
+             Fn             = SOURCE_BUOY   - (NN(K)**2)*SOURCE_VOL*PDEPTH(K)
          
         ! Finding the flux og S,T and TRACER upwards from given sigma layer, thus accounting
         ! for entrainment of matter from the sides.
@@ -565,6 +626,7 @@ MODULE MOD_PLUME
            SALTPF(K)   = SALTPF(K+1) + 2.0_SP*entcoef*SOURCE_MOM*PDEPTH(K)*S1(INODE,K)
            TEMPPF(K)   = TEMPPF(K+1) + 2.0_SP*entcoef*SOURCE_MOM*PDEPTH(K)*T1(INODE,K)
         END IF
+
 # if defined (FABM)
         IF (PRESENT(PTR)) THEN
            DO FAB = 1,IFABM
@@ -578,17 +640,42 @@ MODULE MOD_PLUME
            PFLUX(RELEASENODES(J),K) = -2.0_SP*entcoef*SOURCE_MOM*PDEPTH(K)*WEIGHT(J)
         END DO
 
-        ! We update the plume parameters if the plume is still rising
-        SOURCE_MOM     = Vn**(0.25_SP) ! Momentum flux
-        SOURCE_VOL     = Wn     ! Volume flux
-        SOURCE_BUOY    = Fn     ! Buoyancy flux
+           ! We update the plume parameters if the plume is still rising
+             SOURCE_MOM     = Vn**(0.25_SP) ! Momentum flux
+             SOURCE_VOL     = Wn            ! Volume flux
+             SOURCE_BUOY    = Fn            ! Buoyancy flux
         
-        IF (.NOT.(ISNAN(SOURCE_MOM))) THEN
-           radius      = SOURCE_VOL/SOURCE_MOM ! Plume radius
-        END IF
+             IF (.NOT.(ISNAN(SOURCE_MOM))) THEN
+                radius      = SOURCE_VOL/SOURCE_MOM ! Plume radius
+             END IF
+          END DO            ! THE "CORE" PLUME MODEL
+       END IF               ! RUN_PLUME
+      END DO                ! II
+      write(*,*) 'Number of releasenodes: ', SIZE(RELEASENODES)
+      write(*,*) 'Initial sigma layer: ', INS, ' Final sl:', K
+      END IF                ! NUMPLM>0 (seems superfluous?)
+      END IF ! MSR
+
+    ! Give each processor the results from the plume model
+      CALL ADEAL(MYID,MSRID,NPROCS,NXMAP,PS,SPLM)
+      CALL ADEAL(MYID,MSRID,NPROCS,NXMAP,PT,TPLM)
+      CALL ADEAL(MYID,MSRID,NPROCS,NXMAP,PFLUX_G,FLXPLM)
+
+    ! Tracer part
+# if defined (FABM)
+      DO FAB = 1,IFABM
+         IF (MSR) THEN
+            ALLOCATE(PTR_TMP(0:MGL,KB))
+            PTR_TMP(:,:) = PTR(:,:,FAB)
+         END IF
+         CALL ADEAL(MYID,MSRID,NPROCS,NXMAP,PTR_TMP,FPLM_TMP)
+         FABMPLM(:,:,FAB) = FPLM_TMP(:,:)
+         IF (MSR) THEN
+            DEALLOCATE(PTR_TMP)
+         END IF
       END DO
-      print *, 'utvanning: Vf_new/Vf_old  = ', SOURCE_VOL/INIT_V
-      END IF
+# endif
+
   RETURN
   END SUBROUTINE UPDATE_PLUMES_CALCULATED
 

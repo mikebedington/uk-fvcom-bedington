@@ -525,21 +525,7 @@
 
 !-----Plume Dischage----------------------------
 !  Added by Qin  05/03/2019
-
-# if defined(PLUME)
-      IF(NUMPLM_GL .GT. 0)  THEN
-        CALL UPDATE_PLUMES(IntTime,QPLMDIS,TEMP=TPLMDIS,SALT=SPLMDIS)  
-# if defined(FABM)
-        CALL UPDATE_PLUMES(IntTime,QPLMDIS,FABMR=FABMPLMDIS) 
-# endif           
-# if defined(PLUME_CALCULATED)
-      CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PT=TPLM,PS=SPLM)
-# if defined(FABM)
-       IF (FABM_MODEL) CALL UPDATE_PLUMES_CALCULATED(FLXPLM,VDISTPLM,PTR=FABMPLM)
-# endif 
-# endif 
-      END IF
-# endif   
+!  Removed by Håvard and moved to internal_step.F 19/07/2019
 !----------------------------------      
 
 
