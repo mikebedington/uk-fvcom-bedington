@@ -202,6 +202,7 @@ MODULE MOD_PLUME
       USE EQS_OF_STATE
       USE ALL_VARS
       USE MOD_UTILS
+      USE MOD_PLUME_GRID
 # if defined (MULTIPROCESSOR)
       USE MOD_PAR
 # endif
@@ -211,11 +212,8 @@ MODULE MOD_PLUME
       IMPLICIT NONE
       REAL(SP)                                ::  SOURCE_MOM, SOURCE_VOL, SOURCE_BUOY
       REAL(SP)                                ::           PLUME_AREA,DST,PTEMP,PSALT
-      REAL(SP), ALLOCATABLE                   ::          GRAV_GN(:),D_G(:),ART1_G(:)
-      INTEGER,  ALLOCATABLE                   ::     NTSN_G(:),NBSN_G(:,:),NBSNg(:,:)
-      REAL(SP), ALLOCATABLE                   ::               PFLUX_G(:,:),ZZ_G(:,:)
-      REAL(SP), ALLOCATABLE                   ::               DZZ_G(:,:),RHO1_G(:,:)
-      REAL(SP), ALLOCATABLE                   ::                      PS(:,:),PT(:,:)
+      REAL(SP), ALLOCATABLE                   ::                         PFLUX_G(:,:)
+      REAL(SP), ALLOCATABLE                   ::          RHO1_G(:,:),PS(:,:),PT(:,:)
       INTEGER                                 ::              A,B,C,INS,INODE,K,I,J,O
       INTEGER                                 ::                       II,JJ,NEWROUND
       REAL(SP)                                ::  INIT_V,entcoef,AREA,radius,Wn,Vn,Fn
@@ -276,7 +274,7 @@ MODULE MOD_PLUME
          IF (SERIAL) THEN
             IF (MSR) THEN       ! In serial mode, you will always use the master node?
                ALLOCATE(PTR, SOURCE = FABM_ALL)
-            END IF
+           END IF
          ELSE IF (PAR) THEN
             ALLOCATE(PTR(0:MGL,KB,IFABM));   PTR     = ZERO
             CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,FABM_ALL,PTR)
@@ -285,34 +283,20 @@ MODULE MOD_PLUME
       END IF
 # endif
 
-! General stuff we need when we use the model - feels bad to do this so often
 ! =================================================================================
+
 # if defined (MULTIPROCESSOR)
       IF (SERIAL) THEN
-         IF (MSR) THEN
-            ALLOCATE(ART1_G,  SOURCE = ART1)
-            ALLOCATE(GRAV_GN, SOURCE = GRAV_N)
-            ALLOCATE(ZZ_G,    SOURCE = ZZ)
-            ALLOCATE(D_G,     SOURCE = D)
-            ALLOCATE(DZZ_G,   SOURCE = DZZ)
-            ALLOCATE(RHO1_G,  SOURCE = RHO1)
-            ALLOCATE(NBSN_G,  SOURCE = NBSN)
-            ALLOCATE(NTSN_G,  SOURCE = NTSN)
-         END IF
-
+         ALLOCATE(RHO1_G, SOURCE = RHO1)
       ELSE IF (PAR) THEN
          ALLOCATE(RHO1_G(0:MGL,KB),stat=ierr);           RHO1_G    = ZERO  
-
-       ! Physical variables
-         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,GRAV_N,GRAV_GN)
          CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,RHO1,RHO1_G)
-
       END IF
 # endif
       ALLOCATE(PFLUX_G(0:MGL,KB),stat=ierr);             PFLUX_G   = ZERO
 
-!   Not sure how else to find the global number of plumes...
-! =================================================================
+! ============================================================================            
+
     IF (MSR) THEN
     IF(NUMPLM_GL>0) THEN
     DO II = 1,NUMPLM_GL
@@ -327,13 +311,15 @@ MODULE MOD_PLUME
        ELSE
           RUN_PLUME = .FALSE.
        END IF
-       SOURCE_MOM   =   SOURCE_VOL/(PIPE_RADIUS)
+
+       SOURCE_MOM   =   SOURCE_VOL/(PIPE_RADIUS) 
 
 # if defined (FABM)
        IF (FABM_MODEL) THEN
           PTRACER      =   FABMPLMDIS(II,:)
        END IF 
 # endif
+
 
 ! =============================================================================
 !     End of initialization, the code will now run the plume part of the code
@@ -405,7 +391,6 @@ MODULE MOD_PLUME
 # endif
 
           INIT_V = SOURCE_VOL
-          
           IF (PLUME_DIFFUSOR_ON) THEN
 ! ===========================================================================
 !             Enhanced initial entrainment due to use of diffusors
@@ -637,10 +622,25 @@ MODULE MOD_PLUME
            !     Vn=-1
            !  END IF
              
-           ! Prøver å ikke legge begrensning på utgangs
-             TMParea = PI*(Wn/Vn**0.25_SP)
-             IF((Fn.GT.0).AND.((TMParea/2.5_SP).gt.PLUME_AREA)) THEN
-                 VN=-1
+           ! If the plume buoyancy is negative, and the plume expands fast, then the plume is about to stop.
+           ! This part is hardcoded and ugly (perhaps a 20% increase over 1m rising is normal for plumes >5m?)
+           ! so it should be improved.
+           !  TMParea = PI*(Wn/Vn**0.25_SP)**2.0_SP
+           !  IF((Fn.LT.0).AND.((TMParea/1.2_SP).GT.PLUME_AREA)) THEN
+           !      VN=-1
+           !  END IF
+
+           ! Kill the plume if the rise-angle is too flat. Say that 15 degrees is sufficient to kill the plume?
+             radius_new     = Wn/Vn**0.25_SP
+             !write(*,*) 'radius_new', radius_new
+             !write(*,*) 'radius ', radius
+             
+             diff_rad       = radius_new-radius
+             
+             IF ((Fn.LT.O).AND.(diff_rad.GT.PDEPTH(K)*TAN(2.0_SP*PI*15/360))) THEN
+                Vn = -1
+                write(*,*) 'Killed'
+                write(*,*) 'Sigma level', K
              END IF
 
            ! We update the plume parameters if the plume is still rising

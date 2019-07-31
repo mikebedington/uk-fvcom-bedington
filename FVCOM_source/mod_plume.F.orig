@@ -202,7 +202,6 @@ MODULE MOD_PLUME
       USE EQS_OF_STATE
       USE ALL_VARS
       USE MOD_UTILS
-      USE MOD_PLUME_GRID
 # if defined (MULTIPROCESSOR)
       USE MOD_PAR
 # endif
@@ -212,8 +211,11 @@ MODULE MOD_PLUME
       IMPLICIT NONE
       REAL(SP)                                ::  SOURCE_MOM, SOURCE_VOL, SOURCE_BUOY
       REAL(SP)                                ::           PLUME_AREA,DST,PTEMP,PSALT
-      REAL(SP), ALLOCATABLE                   ::                         PFLUX_G(:,:)
-      REAL(SP), ALLOCATABLE                   ::          RHO1_G(:,:),PS(:,:),PT(:,:)
+      REAL(SP), ALLOCATABLE                   ::          GRAV_GN(:),D_G(:),ART1_G(:)
+      INTEGER,  ALLOCATABLE                   ::     NTSN_G(:),NBSN_G(:,:),NBSNg(:,:)
+      REAL(SP), ALLOCATABLE                   ::               PFLUX_G(:,:),ZZ_G(:,:)
+      REAL(SP), ALLOCATABLE                   ::               DZZ_G(:,:),RHO1_G(:,:)
+      REAL(SP), ALLOCATABLE                   ::                      PS(:,:),PT(:,:)
       INTEGER                                 ::              A,B,C,INS,INODE,K,I,J,O
       INTEGER                                 ::                       II,JJ,NEWROUND
       REAL(SP)                                ::  INIT_V,entcoef,AREA,radius,Wn,Vn,Fn
@@ -221,7 +223,8 @@ MODULE MOD_PLUME
       INTEGER,  ALLOCATABLE                   ::              TMP(:), RELEASENODES(:)
       REAL(SP), ALLOCATABLE                   ::             WEIGHT_TMP(:), WEIGHT(:)
       REAL(SP), DIMENSION(1:2)                ::             PRHO, PRESSURE, PTT, PSS
-      REAL(SP)                                ::                              TMParea
+      REAL(SP)                                ::                 diff_rad, radius_new
+
 # if defined (MULTIPROCESSOR)
       INTEGER                                 ::                                 IERR
 # endif
@@ -244,7 +247,7 @@ MODULE MOD_PLUME
 !     Constants and ICs
       entcoef      = 0.07_SP  ! The exact value of this parameter is disputed
       PI           = 4.0_SP*ATAN(1.0_SP)
-      RUN_PLUME    = .TRUE.   ! This should be false, or?
+      RUN_PLUME    = .TRUE.
 
 !===================================================================================
 !                                Physical variables
@@ -257,10 +260,8 @@ MODULE MOD_PLUME
             ALLOCATE(PT, SOURCE = T1)
          END IF
       ELSE IF (PAR) THEN
-         IF (MSR) THEN
-            ALLOCATE(PS(0:MGL,KB), stat=ierr);       PS = 0.0_SP
-            ALLOCATE(PT(0:MGL,KB), stat=ierr);       PT = 0.0_SP
-         END IF
+         ALLOCATE(PS(0:MGL,KB), stat=ierr);       PS = 0.0_SP
+         ALLOCATE(PT(0:MGL,KB), stat=ierr);       PT = 0.0_SP
          CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,S1,PS)
          CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,T1,PT)
       END IF
@@ -268,15 +269,15 @@ MODULE MOD_PLUME
 
 ! FABM stuff
 # if defined (FABM)
-      IFABM = SIZE(FABM_ALL,3)
-      IF (MSR) THEN
+      IF (FABM_MODEL) THEN
+         IFABM = SIZE(FABM_ALL,3)
          ALLOCATE(FABMPF(KB,IFABM));       FABMPF  = ZERO
          ALLOCATE(PTRACER(IFABM));         PTRACER = ZERO
 # if defined (MULTIPROCESSOR)
          IF (SERIAL) THEN
             IF (MSR) THEN       ! In serial mode, you will always use the master node?
                ALLOCATE(PTR, SOURCE = FABM_ALL)
-           END IF
+            END IF
          ELSE IF (PAR) THEN
             ALLOCATE(PTR(0:MGL,KB,IFABM));   PTR     = ZERO
             CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,FABM_ALL,PTR)
@@ -284,59 +285,35 @@ MODULE MOD_PLUME
 # endif
       END IF
 # endif
-# endif
 
+! General stuff we need when we use the model - feels bad to do this so often
 ! =================================================================================
-
 # if defined (MULTIPROCESSOR)
       IF (SERIAL) THEN
-         ALLOCATE(RHO1_G, SOURCE = RHO1)
-      ELSE IF (PAR) THEN
-<<<<<<< HEAD
-       ! Make room for the variables
          IF (MSR) THEN
-            ALLOCATE(ART1_G(0:MGL),stat=ierr);              ART1_G    = ZERO
-            ALLOCATE(GRAV_GN(0:MGL),stat=ierr);             GRAV_GN   = ZERO
-            ALLOCATE(ZZ_G(0:MGL,KB),stat=ierr);             ZZ_G      = ZERO
-            ALLOCATE(D_G(0:MGL),stat=ierr);                 D_G       = ZERO
-            ALLOCATE(DZZ_G(0:MGL,KB),stat=ierr);            DZZ_G     = ZERO
-            ALLOCATE(NBSN_G(0:MGL,SIZE(NBSN,2)),stat=ierr); NBSN_G    = ZERO
-            ALLOCATE(NTSN_G(0:MGL),stat=ierr);              NTSN_G    = ZERO
-            ALLOCATE(RHO1_G(0:MGL,KB),stat=ierr);           RHO1_G    = ZERO  
+            ALLOCATE(ART1_G,  SOURCE = ART1)
+            ALLOCATE(GRAV_GN, SOURCE = GRAV_N)
+            ALLOCATE(ZZ_G,    SOURCE = ZZ)
+            ALLOCATE(D_G,     SOURCE = D)
+            ALLOCATE(DZZ_G,   SOURCE = DZZ)
+            ALLOCATE(RHO1_G,  SOURCE = RHO1)
+            ALLOCATE(NBSN_G,  SOURCE = NBSN)
+            ALLOCATE(NTSN_G,  SOURCE = NTSN)
          END IF
+
+      ELSE IF (PAR) THEN
+         ALLOCATE(RHO1_G(0:MGL,KB),stat=ierr);           RHO1_G    = ZERO  
 
        ! Physical variables
          CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,GRAV_N,GRAV_GN)
          CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,RHO1,RHO1_G)
-         
-       ! Some grid stuff
-       ! Depth/sigma layer information
-         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,ZZ,ZZ_G)
-         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,D,D_G)
-         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,DZZ,DZZ_G)
 
-       ! Grid IDs and connectivity
-         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,ART1,ART1_G)
-         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,NTSN,NTSN_G)
-
-         ALLOCATE(NBSNg(SIZE(NBSN,1),SIZE(NBSN,2)));        NBSNg     = ZERO
-         DO I = 1,M
-            NBSNg(I,:) = NGID_X(NBSN(I,:))
-         END DO
-         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,NBSNg,NBSN_G)
-         DEALLOCATE(NBSNg)
-=======
-         ALLOCATE(RHO1_G(0:MGL,KB),stat=ierr);           RHO1_G    = ZERO  
-         CALL ACOLLECT(MYID,MSRID,NPROCS,NMAP,RHO1,RHO1_G)
->>>>>>> 0dbb21f (Moved some grid-specific stuff to a seperate file. Still improvements to be made on the kill-switch.)
       END IF
 # endif
-      IF (MSR) THEN
-         ALLOCATE(PFLUX_G(0:MGL,KB),stat=ierr);             PFLUX_G   = ZERO
-      END IF
+      ALLOCATE(PFLUX_G(0:MGL,KB),stat=ierr);             PFLUX_G   = ZERO
 
-! ============================================================================            
-
+!   Not sure how else to find the global number of plumes...
+! =================================================================
     IF (MSR) THEN
     IF(NUMPLM_GL>0) THEN
     DO II = 1,NUMPLM_GL
@@ -351,19 +328,13 @@ MODULE MOD_PLUME
        ELSE
           RUN_PLUME = .FALSE.
        END IF
-
-       SOURCE_MOM   =   SOURCE_VOL/(PIPE_RADIUS) 
+       SOURCE_MOM   =   SOURCE_VOL/(PIPE_RADIUS)
 
 # if defined (FABM)
-<<<<<<< HEAD
-       PTRACER      =   FABMPLMDIS(II,:)
-=======
        IF (FABM_MODEL) THEN
           PTRACER      =   FABMPLMDIS(II,:)
        END IF 
->>>>>>> 0dbb21f (Moved some grid-specific stuff to a seperate file. Still improvements to be made on the kill-switch.)
 # endif
-
 
 ! =============================================================================
 !     End of initialization, the code will now run the plume part of the code
@@ -378,8 +349,8 @@ MODULE MOD_PLUME
 
 ! Temporarilly store the initial plume temperature and salinity as vectors so
 ! that we can use the sea water density functions to estimate the plume density.
-          PTT      = PT(INODE,INS)!PTEMP
-          PSS      = 100!PSALT
+          PTT      = PTEMP
+          PSS      = PSALT
 
           SELECT CASE(SEA_WATER_DENSITY_FUNCTION)
           CASE(SW_DENS1)
@@ -404,8 +375,7 @@ MODULE MOD_PLUME
              CALL FATAL_ERROR("INVALID MOMENTUM FLUX, MOD_PLUME DOES ",&
              &"NOT SUPPORT SINKING PLUMES (AT THE MOMENT).")
           END IF
-          write(*,*) 'PRHO', PRHO
-          write(*,*) 'RHO1_G', RHO1_G(INODE,INS)
+
 !===========================================================================
 ! Buoyancy frequency, stolen from the gotm routine
 ! ----
@@ -428,12 +398,15 @@ MODULE MOD_PLUME
           SALTPF(K)      = SOURCE_VOL*PSALT
 
 # if defined (FABM)
-          DO FAB = 1,IFABM
-             FABMPF(INS,FAB)   = SOURCE_VOL*PTRACER(FAB)
-          END DO
+          IF (FABM_MODEL) THEN
+             DO FAB = 1,IFABM
+                FABMPF(INS,FAB)   = SOURCE_VOL*PTRACER(FAB)
+             END DO
+          END IF
 # endif
 
           INIT_V = SOURCE_VOL
+          
           IF (PLUME_DIFFUSOR_ON) THEN
 ! ===========================================================================
 !             Enhanced initial entrainment due to use of diffusors
@@ -473,10 +446,12 @@ MODULE MOD_PLUME
              PSF    = DIFF_VOL*PSALT
 
 # if defined (FABM)
-             ALLOCATE(PTRF(IFABM));    PTRF = ZERO
-             DO FAB = 1,IFABM
-                PTRF(FAB)   = DIFF_VOL*PTRACER(FAB)
-             END DO
+             IF (FABM_MODEL) THEN
+                ALLOCATE(PTRF(IFABM));    PTRF = ZERO
+                DO FAB = 1,IFABM
+                   PTRF(FAB)   = DIFF_VOL*PTRACER(FAB)
+                END DO
+             END IF
 # endif
 
          ! Idea: Integrate these equations until they merge
@@ -663,12 +638,32 @@ MODULE MOD_PLUME
            !     Vn=-1
            !  END IF
              
+<<<<<<< HEAD
+           ! Prøver å ikke legge begrensning på utgangs
+             TMParea = PI*(Wn/Vn**0.25_SP)
+             IF((Fn.GT.0).AND.((TMParea/2.5_SP).gt.PLUME_AREA)) THEN
+                 VN=-1
+=======
            ! If the plume buoyancy is negative, and the plume expands fast, then the plume is about to stop.
            ! This part is hardcoded and ugly (perhaps a 20% increase over 1m rising is normal for plumes >5m?)
            ! so it should be improved.
-             TMParea = PI*(Wn/Vn**0.25_SP)**2.0_SP
-             IF((Fn.LT.0).AND.((TMParea/1.2_SP).GT.PLUME_AREA)) THEN
-                 VN=-1
+           !  TMParea = PI*(Wn/Vn**0.25_SP)**2.0_SP
+           !  IF((Fn.LT.0).AND.((TMParea/1.2_SP).GT.PLUME_AREA)) THEN
+           !      VN=-1
+           !  END IF
+
+           ! Kill the plume if the rise-angle is too flat. Say that 15 degrees is sufficient to kill the plume?
+             radius_new     = Wn/Vn**0.25_SP
+             !write(*,*) 'radius_new', radius_new
+             !write(*,*) 'radius ', radius
+             
+             diff_rad       = radius_new-radius
+             
+             IF ((Fn.LT.O).AND.(diff_rad.GT.PDEPTH(K)*TAN(2.0_SP*PI*15/360))) THEN
+                Vn = -1
+                write(*,*) 'Killed'
+                write(*,*) 'Sigma level', K
+>>>>>>> fc00c3b (Changes to kill switch)
              END IF
 
            ! We update the plume parameters if the plume is still rising
@@ -682,13 +677,8 @@ MODULE MOD_PLUME
           END DO            ! THE "CORE" PLUME MODEL
        END IF               ! RUN_PLUME
       END DO                ! II
-<<<<<<< HEAD
-      write(*,*) 'Number of releasenodes: ', SIZE(RELEASENODES)
-      write(*,*) 'Initial sigma layer: ', INS, ' Final sl:', K
-=======
       IF (RUN_PLUME) THEN
       END IF
->>>>>>> 0dbb21f (Moved some grid-specific stuff to a seperate file. Still improvements to be made on the kill-switch.)
       END IF                ! NUMPLM>0 (seems superfluous?)
       END IF ! MSR
 
@@ -699,17 +689,19 @@ MODULE MOD_PLUME
 
     ! Tracer part
 # if defined (FABM)
-      DO FAB = 1,IFABM
-         IF (MSR) THEN
-            ALLOCATE(PTR_TMP(0:MGL,KB))
-            PTR_TMP(:,:) = PTR(:,:,FAB)
-         END IF
-         CALL ADEAL(MYID,MSRID,NPROCS,NXMAP,PTR_TMP,FPLM_TMP)
-         FABMPLM(:,:,FAB) = FPLM_TMP(:,:)
-         IF (MSR) THEN
-            DEALLOCATE(PTR_TMP)
-         END IF
-      END DO
+      IF (FABM_MODEL) THEN
+         DO FAB = 1,IFABM
+            IF (MSR) THEN
+               ALLOCATE(PTR_TMP(0:MGL,KB))
+               PTR_TMP(:,:) = PTR(:,:,FAB)
+            END IF
+            CALL ADEAL(MYID,MSRID,NPROCS,NXMAP,PTR_TMP,FPLM_TMP)
+            FABMPLM(:,:,FAB) = FPLM_TMP(:,:)
+            IF (MSR) THEN
+               DEALLOCATE(PTR_TMP)
+            END IF
+         END DO
+      END IF
 # endif
 
   RETURN
