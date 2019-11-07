@@ -3749,11 +3749,13 @@ CONTAINS
 
 
     ! FIND THE RIVER NAME IN THE FILE
-    DIM => FIND_DIM(NCF,INPUT_TYPE,FOUND)
-
+    DIM => FIND_DIM(NCF,'rivers',FOUND)
+	DIM => FIND_DIM(NCF,'plumes',FOUND)   ! added by Qin, test 
+	
     rvrs_in_file = DIM%DIM
 
-    VAR => FIND_VAR(NCF,INPUT_NAMES,found)
+    VAR => FIND_VAR(NCF,'river_names',found)
+    VAR => FIND_VAR(NCF,'plume_names',found)  ! added by Qin, test 
 
     ! ATTEMPT TO ONLY READ NAMES LIST ONCE
     IF(.NOT. ASSOCIATED(VAR%VEC_CHR)) THEN
