@@ -2298,6 +2298,327 @@ CONTAINS
          &CTING 'PSU'")
 		 
   END SUBROUTINE CHECK_PLUME_FILE
+# endif
+
+!================================================================
+!           PUMP STUFF
+!================================================================
+! READ PUMP PARAMETER, added by Qin 28/01/2020
+# if defined (PUMP)    
+  SUBROUTINE PUMP_INTAKE
+    USE MOD_PAR
+    IMPLICIT NONE
+    INTEGER :: I, J,K, fcnt,rcnt,status, nfiles,nrs,IOS,NS
+    TYPE(A_PUMP_FILE) DUMMY
+    TYPE(NCFILE),POINTER :: NCF
+    TYPE(NCDIM), POINTER :: DIM
+    TYPE(NCVAR), POINTER :: VAR
+    TYPE(NCVAR), POINTER :: DUM_P
+
+    REAL(SP), POINTER :: STORAGE_VEC(:),STORAGE_ARR(:,:)
+    LOGICAL :: FOUND, MINE
+    CHARACTER(LEN=7) :: chr
+    character(len=20), allocatable :: dist_strings(:)
+    
+	REAL(SP) :: MYDIST(KBM1)
+
+   
+    IF(DBG_SET(DBG_SBR)) write(IPT,*) "START PUMP_INTAKE"
+
+    NULLIFY(STORAGE_ARR)
+
+    ! TRANSLATE TO THE OLD NAME FOR TOTAL NUMBER OF PLUMES
+    NUMPUMP_GL = PUMP_NUMBER
+
+    IF (PUMP_NUMBER == 0 ) THEN
+       NUMPUMP = 0
+       IF(DBG_SET(DBG_LOG)) write(IPT,*) "! THERE ARE NO PUMPS IN THIS MODEL"
+       ALLOCATE(PUMP_FORCING_COMMENTS(1))
+       PUMP_FORCING_COMMENTS(1) = "THERE ARE NO PUMPS IN THIS MODEL"
+       RETURN
+    END IF
+
+
+    IF (DBG_SET(DBG_SBRIO))THEN
+       WRITE(IPT,*) "Total Number Of Pumps = ", PUMP_NUMBER 
+       WRITE(IPT,*)"============================="
+       DO I =1,PUMP_NUMBER  
+          write(IPT,*) "Pump Number:",I 
+          WRITE(IPT,*) "Pump File ="//TRIM(PUMPS(i)%FILE)
+          WRITE(IPT,*) "Pump Name ="//trim(PUMPS(i)%NAME)
+          WRITE(IPT,*) "Pump Location    = ",PUMPS(i)%LOCATION
+          WRITE(IPT,*) "Pump Distribution =",PUMPS(i)%distribution(1:KBM1)
+          WRITE(IPT,*)"============================="
+       END DO
+    END IF
+
+    ALLOCATE(PUMP_FORCING_COMMENTS(PUMP_NUMBER + 2))
+    WRITE(CHR,'(I7)')PUMP_NUMBER
+    PUMP_FORCING_COMMENTS(1) = "THERE ARE "//TRIM(adjustl(CHR))//" PUMPS IN THIS MODEL."
+    PUMP_FORCING_COMMENTS(2) = "THE FOLLOWING PUMP NAMES ARE USED:"
+    DO I =1,PUMP_NUMBER
+       PUMP_FORCING_COMMENTS(2+I) = TRIM(PUMPS(i)%NAME)
+    END DO
+
+
+    ! CHECK TO MAKE SURE THE LOCATION IS VALID AND ADD NAMES TO
+    ! COMMENT STRING
+    nfiles = 0
+    NUMPUMP = 0
+    DO  I = 1,PUMP_NUMBER 
+       ! CHECK THE INFLOW LOCATION OF EACH PUMP
+       ! COUNT THE NUMBER THAT BELONG TO EACH PROCESSOR
+          IF(PUMPS(i)%LOCATION > MGL .or. PUMPS(i)%LOCATION < 1)THEN
+             write(chr,'(I7)') PUMPS(i)%LOCATION
+             CALL FATAL_ERROR ("PUMP_INTAKE: FOR THE PUMP NAMED: "&
+                  &//trim(PUMPS(i)%NAME),"THE PUMP GRID LOCATION IN&
+                  & THE NAME LIST IS NOT IN THE GLOBAL DOMAIN",&
+                  & "YOU SPECIFIED NODE NUMBER: "//chr)
+          END IF
+
+     
+! ===============================================================================
+       ! Irrelevant, we want it to be owned by the MSR proc    
+       ! COUNT THE NUMBER OF PUMPS OWNED BY THIS PROC
+       !   IF (NLID(PUMPS(I)%LOCATION) .GT. 0) NUMPUMP = NUMPUMP + 1
+! ===============================================================================
+       IF (MSR) THEN
+          NUMPUMP = PUMP_NUMBER
+       END IF
+
+       ! COUNT THE NUMBER OF FILES
+       NCF => FIND_FILE(FILEHEAD,TRIM(PUMPS(I)%FILE),FOUND)
+       IF (.NOT.FOUND) CALL FATAL_ERROR &
+            & ("PUMP_INTAKE: COULD NOT FIND PUMP FILE OBJECT NAMED: &
+            &"//TRIM(PUMPS(I)%FILE))
+       
+       IF(.NOT. associated(NCF%FTIME)) CALL FATAL_ERROR&
+            &("PUMP FILE DID NOT LOAD PROPERLY",& 
+            & "File name:"//trim(NCF%FNAME),&
+            &"Please check the time format!")
+
+       IF (NCF%FTIME%PREV_STKCNT /= 999) THEN
+          NFILES = NFILES +1
+          NCF%FTIME%PREV_STKCNT = 999
+       END IF
+
+    END DO
+
+
+    ! ALLOCATE THE SPACE FOR THE PUMP FILES AND NULLIFY POINTERS
+    ALLOCATE(PUMP_FORCING(NFILES))
+    DO I =1,NFILES
+       NULLIFY(PUMP_FORCING(I)%NCF)
+       NULLIFY(PUMP_FORCING(I)%FLUX_N)
+    
+    END DO
+
+
+    ! ALLOCATE THE SPACE FOR THE PUMP DATA
+    ALLOCATE(INODEPUMP(NUMPUMP))
+    ALLOCATE(QPUMP(NUMPUMP));               QPUMP      =  0.0_SP
+    ALLOCATE(PVDIST(NUMPUMP,KBM1));         PVDIST = 0.0_SP
+
+    FCNT = 0
+    RCNT = 0
+    DO  I = 1,PUMP_NUMBER 
+       ! SET MINE TO FALSE
+       MINE = .false. 
+       ! Mine is set true if this plume name belongs
+       ! to this processor
+       ! MAKE THE LOCAL AND GLOBAL INDEX
+
+       IF ((MSR).AND.(PUMPS(I)%LOCATION.GT.0)) THEN !(NLID(PLUMES(I)%LOCATION) .GT. 0) THEN
+          rcnt = rcnt + 1
+          INODEPUMP(rcnt)       = PUMPS(I)%LOCATION
+          MINE = .TRUE.
+       END IF
+	   
+      ! MAKE VQDIST
+       IF(MINE) THEN
+          IF(any(PUMPS(I)%DISTRIBUTION(1:KBM1)<0.0_SP)) CALL FATAL_ERROR&
+               &("You are not permitted to set the pump vertical distrobution value less than zero!",&
+               & "This usually indicates a mistake in the name list - not enough layers specifed" )
+           PVDIST(RCNT,1:kbm1)=PUMPS(I)%DISTRIBUTION(1:KBM1)
+        END IF
+!--------------------------------------------------------------------
+
+       
+       ! NOW PUT THE PLUMES IN THE PLUME_FORCING TYPE
+       NCF => FIND_FILE(FILEHEAD,TRIM(PUMPS(I)%FILE),FOUND)
+
+       IF (NCF%FTIME%PREV_STKCNT == 999) THEN
+          FCNT = FCNT + 1
+          PUMP_FORCING(FCNT)%NCF => NCF
+          NCF%FTIME%PREV_STKCNT = 0
+
+          DIM => FIND_DIM(NCF,'pumps',FOUND)
+          IF(.not.FOUND) CALL FATAL_ERROR &
+               & ("COULD NOT FIND DIMENSION 'pumps'",&
+               & "In the file: "//trim(NCF%FNAME) )
+
+          PUMP_FORCING(FCNT)%PUMPS_IN_FILE=DIM%DIM
+          ALLOCATE(PUMP_FORCING(FCNT)%PUMP_FILE2LOC(DIM%DIM))
+          PUMP_FORCING(FCNT)%PUMP_FILE2LOC = 0
+       END IF
+
+       ! FIGURE OUT WHICH PLUME IT IS WHICH FILE AND SET THE INDEX 
+       DO J = 1, NFILES
+          ! IN THIS FILE FIND THE NAME
+          if (ASSOCIATED(NCF,PUMP_FORCING(J)%NCF)) THEN
+             K=SEARCH_NAME(NCF,PUMPS(I)%NAME,'pumps','pump_names')
+
+             ! THIS IS MY PLUME SO SET THE INDEX
+             IF (MINE) PUMP_FORCING(J)%PUMP_FILE2LOC(K)=RCNT
+
+          END IF
+       END DO
+
+
+    END DO
+
+    IF (FCNT /= NFILES) CALL FATAL_ERROR&
+         ("PUMP_INTAKE: WE LOST A PUMP FILE IN THE MIDDLE OF NOWHERE!")
+
+    IF (RCNT /= NUMPUMP) CALL FATAL_ERROR&
+         ("PUMP_INTAKE: WE LOST A PUMP IN THE MIDDLE OF NOWHERE!")
+
+
+    DO I = 1, NFILES
+
+       NCF => PUMP_FORCING(I)%NCF
+
+       DIM => FIND_DIM(NCF,'pumps',FOUND)
+
+       nrs = DIM%dim
+
+       ! GET THE FLUX VARIABLE
+       VAR => FIND_VAR(NCF,'pump_flux',FOUND)
+
+       ALLOCATE(STORAGE_VEC(nrs), stat = status)
+       IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN PUMP_INTAKE")
+       PUMP_FORCING(I)%FLUX_N => reference_var(var)
+       CALL NC_CONNECT_PVAR(PUMP_FORCING(I)%FLUX_N,STORAGE_VEC)
+       NULLIFY(STORAGE_VEC)
+
+       ALLOCATE(STORAGE_VEC(nrs), stat = status)
+       IF(STATUS /= 0) CALL FATAL_ERROR("ALLOCATION ERROR IN PUMP_INTAKE")
+       PUMP_FORCING(I)%FLUX_P => reference_var(var)
+       CALL NC_CONNECT_PVAR(PUMP_FORCING(I)%FLUX_P,STORAGE_VEC)
+       NULLIFY(STORAGE_VEC)
+
+    END DO
+
+    IF(DBG_SET(DBG_LOG)) THEN
+       WRITE(IPT,*)"!"
+       WRITE(IPT,*)"!  PUMP FORCING ON"
+       WRITE(IPT,*)'!  GLOBAL NUMBER OF PUMPS :',PUMP_NUMBER
+       WRITE(IPT,*)'!  NUMBER OF PUMP FILES   :', nfiles
+    END IF
+
+    IF(DBG_SET(DBG_SCL)) THEN
+       WRITE(IPT,*)"/////////=============================///////////"
+       WRITE(IPT,*)"   PRINTING PUMP FORCING DETAILS"
+
+       WRITE(IPT,*)"  LOCAL NUMBER OF PUMP  : ", NUMPUMP
+
+       WRITE(IPT,*)"============================="       
+       DO I = 1,nfiles
+          WRITE(IPT,*)" FILE NAME: "//TRIM(PUMP_FORCING(I)%NCF%FNAME)
+          WRITE(IPT,*)" NUMBER IN FILE=",PUMP_FORCING(I)%PUMPS_IN_FILE
+          WRITE(IPT,*)" PUMP_FILE2LOC = ",PUMP_FORCING(I)%PUMP_FILE2LOC
+          WRITE(IPT,*)"============================="
+       END DO
+
+       WRITE(IPT,*)"/////////=============================///////////"
+    END IF
+
+    IF(DBG_SET(DBG_SBR)) write(IPT,*) "END PUMP_INTAKE"
+
+
+  END SUBROUTINE PUMP_INTAKE
+
+
+  !================================================================
+  !================================================================  
+  SUBROUTINE CHECK_PUMP_FILE(NCF)
+    ! CALL FATAL_ERROR IF THERE IS ANYTHING WRONG WITH THE FILE
+    IMPLICIT NONE
+    TYPE(NCFILE), POINTER ::NCF
+    ! SOME NC POINTERS
+    TYPE(NCATT), POINTER :: ATT
+    TYPE(NCDIM), POINTER :: DIM
+    TYPE(NCVAR), POINTER :: VAR
+
+    TYPE(TIME) :: fSTART, fEND
+    INTEGER :: NTIMES,NS
+    LOGICAL FOUND
+
+    IF(.NOT. ASSOCIATED(NCF)) CALL FATAL_ERROR &
+         & ("THE PUMP FILE OBJECT PASSED TO 'check_pump_file' IS NOT ASSOCIATED")
+
+    ! CHECK DIMENSIONS
+    DIM => FIND_DIM(NCF,'time',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PUMP FILE:"//TRIM(NCF%FNAME),"IS MISSING THE 'time' DIMENSION")
+
+    nTIMES = DIM%dim
+
+    DIM => FIND_DIM(NCF,'namelen',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PUMP FILE:"//TRIM(NCF%FNAME),"IS MISSING THE 'namelen' DIMENSION")
+
+    DIM => FIND_DIM(NCF,'pumps',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PUMP FILE:"//TRIM(NCF%FNAME),"IS MISSING THE 'pumps' DIMENSION")
+
+    ! CHECK VARIABLES AND THEIR ATTS
+    IF(.NOT. ASSOCIATED(NCF%FTIME)) CALL FATAL_ERROR &
+         & ('THE PUMP FILE '//TRIM(NCF%FNAME),&
+         'DOES NOT HAVE A RECONGIZED TIME VARIABLE')
+
+ 
+       ! CHECK START AND END TIME FOR THE FILE:
+       FSTART = GET_FILE_TIME(NCF,1)
+       IF(FSTART > StartTIME) THEN
+          CALL PRINT_REAL_TIME(StartTime,IPT,"Model Start")
+          CALL PRINT_REAL_TIME(FSTART,IPT,"Pump Data Start")
+          CALL FATAL_ERROR &
+               & ("Date of the first pump data point must be less than or equal to the model start date:",&
+               & "The Pump File: "//TRIM(NCF%FNAME)//'; has a bad start date.')
+       END IF
+       
+       FEND = GET_FILE_TIME(NCF,NTIMES)
+       IF(FEND < EndTime) THEN
+          CALL PRINT_REAL_TIME(EndTime,IPT,"Model End")
+          CALL PRINT_REAL_TIME(FEND,IPT,"Pump Data End")
+          
+          CALL FATAL_ERROR &
+               & ("Date of the last pump data point must be greater than or equal to the model end date:",&
+               & "The Pump File: "//TRIM(NCF%FNAME)//'; has a bad end date.')
+       END IF
+
+
+    VAR => FIND_VAR(NCF,'pump_names',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PUMP FILE:"//TRIM(NCF%FNAME),"IS MISSING THE 'pump_names' VARIABLE")
+    ! HAS NO ATTRIBUTES
+
+    VAR => FIND_VAR(NCF,'pump_flux',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PUMP FILE:"//TRIM(NCF%FNAME),"IS MISSING THE 'pump_flux' VARIABLE")
+
+    ATT => FIND_ATT(VAR,'units',FOUND)
+    IF(.NOT. FOUND)  CALL FATAL_ERROR &
+         & ("THE PUMP FILE:"//TRIM(NCF%FNAME),"THE VARIABLE: "&
+         &//TRIM(VAR%VARNAME), "IS MISSING THE ATTRIBUTE 'units'")
+
+    IF(TRIM(ATT%CHR(1)) /= "m^3s^-1")CALL FATAL_ERROR &
+         & ("THE  PUMP FILE:"//TRIM(NCF%FNAME),"THE VARIABLE: "&
+         &//TRIM(VAR%VARNAME), "THE ATTRIBUTE 'units' IS INCORRECT: EXPE&
+         &CTING 'm^3s^-1'")	 
+  END SUBROUTINE CHECK_PUMP_FILE
+# endif
   !================================================================
   !================================================================
 
