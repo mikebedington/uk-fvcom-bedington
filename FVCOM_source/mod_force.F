@@ -170,6 +170,22 @@ MODULE MOD_FORCE
      ! ADD MORE HERE!
   END TYPE A_PLUME_FILE
   TYPE(A_PLUME_FILE), ALLOCATABLE,PUBLIC :: PLUME_FORCING(:)
+# endif
+
+# if defined (PUMP)
+  ! =================================================================
+  ! PUMP FORCING VARIABLES FOR UPDATE ANE SETUP, added by Qin 28/01/2020
+  CHARACTER(LEN=Char_max_attlen), PUBLIC,ALLOCATABLE :: PUMP_FORCING_COMMENTS(:)
+  TYPE A_PUMP_FILE
+     TYPE(NCFILE), POINTER :: NCF
+     INTEGER PUMPS_IN_FILE     
+     TYPE(TIME) :: PUMP_PERIOD  
+     INTEGER, ALLOCATABLE :: PUMP_FILE2LOC(:)
+     TYPE(NCVAR), POINTER :: FLUX_N, FLUX_P
+     ! ADD MORE HERE!
+  END TYPE A_PUMP_FILE
+  TYPE(A_PUMP_FILE), ALLOCATABLE,PUBLIC :: PUMP_FORCING(:)
+# endif
 
   ! =================================================================
   ! GROUND WATER FORCING VARIABLES FOR UPDATE AND SETUP

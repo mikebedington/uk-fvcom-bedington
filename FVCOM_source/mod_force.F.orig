@@ -81,7 +81,7 @@ MODULE MOD_FORCE
 
 # if defined (FABM)
   TYPE TYPE_NCVAR_POINTER
-  TYPE(NCVAR), POINTER :: p => NULL()
+     TYPE(NCVAR), POINTER :: p => NULL()
   END TYPE
 # endif
 
@@ -170,6 +170,9 @@ MODULE MOD_FORCE
      ! ADD MORE HERE!
   END TYPE A_PLUME_FILE
   TYPE(A_PLUME_FILE), ALLOCATABLE,PUBLIC :: PLUME_FORCING(:)
+<<<<<<< HEAD
+=======
+# endif
 
 # if defined (PUMP)
   ! =================================================================
@@ -181,15 +184,11 @@ MODULE MOD_FORCE
      TYPE(TIME) :: PUMP_PERIOD  
      INTEGER, ALLOCATABLE :: PUMP_FILE2LOC(:)
      TYPE(NCVAR), POINTER :: FLUX_N, FLUX_P
-     
-
-# if defined (FABM)
-     TYPE (TYPE_NCVAR_POINTER),DIMENSION(:),ALLOCATABLE :: FABM_N,FABM_P
-# endif
      ! ADD MORE HERE!
   END TYPE A_PUMP_FILE
   TYPE(A_PUMP_FILE), ALLOCATABLE,PUBLIC :: PUMP_FORCING(:)
 # endif
+>>>>>>> ef16894 (implementing the S/T changes with the pump flux)
 
   ! =================================================================
   ! GROUND WATER FORCING VARIABLES FOR UPDATE AND SETUP
@@ -574,11 +573,6 @@ MODULE MOD_FORCE
 # if defined (PLUME)
   PUBLIC :: UPDATE_PLUMES
 # endif  
-
-# if defined (PUMP)
-  PUBLIC :: UPDATE_PUMPS
-# endif 
-
 # if defined (WATER_QUALITY)
   PUBLIC :: UPDATE_OBC_WQM
 # endif  
@@ -727,10 +721,6 @@ CONTAINS
 
 # if defined (PLUME) 
     CALL  PLUME_DISCHARGE	
-# endif 
-
-# if defined (PUMP) 
-    CALL  PUMP_INTAKE
 # endif 
 	
 # if !defined (HEATING_CALCULATED) && !defined (HEATING_CALCULATED_GL) && !defined (HEATING_SOLAR)    
@@ -2327,8 +2317,6 @@ CONTAINS
          &CTING 'PSU'")
 		 
   END SUBROUTINE CHECK_PLUME_FILE
-<<<<<<< HEAD
-=======
 # endif
 
 !================================================================
@@ -2337,7 +2325,6 @@ CONTAINS
 ! READ PUMP PARAMETER, added by Qin 28/01/2020
 # if defined (PUMP)    
   SUBROUTINE PUMP_INTAKE
-    USE MOD_PAR
     IMPLICIT NONE
     INTEGER :: I, J,K, fcnt,rcnt,status, nfiles,nrs,IOS,NS
     TYPE(A_PUMP_FILE) DUMMY
@@ -2346,17 +2333,14 @@ CONTAINS
     TYPE(NCVAR), POINTER :: VAR
     TYPE(NCVAR), POINTER :: DUM_P
 
-    REAL(SP), POINTER :: STORAGE_VEC(:),STORAGE_ARR(:,:)
+    REAL(SP), POINTER :: STORAGE_VEC(:)
     LOGICAL :: FOUND, MINE
     CHARACTER(LEN=7) :: chr
     character(len=20), allocatable :: dist_strings(:)
-    
-	REAL(SP) :: MYDIST(KBM1)
 
-   
     IF(DBG_SET(DBG_SBR)) write(IPT,*) "START PUMP_INTAKE"
 
-    NULLIFY(STORAGE_ARR)
+    NULLIFY(STORAGE_VEC)
 
     ! TRANSLATE TO THE OLD NAME FOR TOTAL NUMBER OF PLUMES
     NUMPUMP_GL = PUMP_NUMBER
@@ -2407,15 +2391,10 @@ CONTAINS
                   & "YOU SPECIFIED NODE NUMBER: "//chr)
           END IF
 
-     
-! ===============================================================================
-       ! Irrelevant, we want it to be owned by the MSR proc    
+      
        ! COUNT THE NUMBER OF PUMPS OWNED BY THIS PROC
-       !   IF (NLID(PUMPS(I)%LOCATION) .GT. 0) NUMPUMP = NUMPUMP + 1
-! ===============================================================================
-       IF (MSR) THEN
-          NUMPUMP = PUMP_NUMBER
-       END IF
+            IF (NLID(PUMPS(I)%LOCATION) .GT. 0) NUMPUMP = NUMPUMP + 1
+
 
        ! COUNT THE NUMBER OF FILES
        NCF => FIND_FILE(FILEHEAD,TRIM(PUMPS(I)%FILE),FOUND)
@@ -2441,7 +2420,7 @@ CONTAINS
     DO I =1,NFILES
        NULLIFY(PUMP_FORCING(I)%NCF)
        NULLIFY(PUMP_FORCING(I)%FLUX_N)
-    
+       NULLIFY(PUMP_FORCING(I)%FLUX_P)   
     END DO
 
 
@@ -2459,13 +2438,13 @@ CONTAINS
        ! to this processor
        ! MAKE THE LOCAL AND GLOBAL INDEX
 
-       IF ((MSR).AND.(PUMPS(I)%LOCATION.GT.0)) THEN !(NLID(PLUMES(I)%LOCATION) .GT. 0) THEN
+       IF (NLID(PUMPS(I)%LOCATION) .GT. 0) THEN
           rcnt = rcnt + 1
-          INODEPUMP(rcnt)       = PUMPS(I)%LOCATION
+          INODEPUMP(rcnt)       =  NLID(PUMPS(I)%LOCATION)
           MINE = .TRUE.
        END IF
 	   
-      ! MAKE VQDIST
+      ! MAKE PVDIST
        IF(MINE) THEN
           IF(any(PUMPS(I)%DISTRIBUTION(1:KBM1)<0.0_SP)) CALL FATAL_ERROR&
                &("You are not permitted to set the pump vertical distrobution value less than zero!",&
@@ -2496,10 +2475,10 @@ CONTAINS
        ! FIGURE OUT WHICH PLUME IT IS WHICH FILE AND SET THE INDEX 
        DO J = 1, NFILES
           ! IN THIS FILE FIND THE NAME
-          if (ASSOCIATED(NCF,PUMP_FORCING(J)%NCF)) THEN
+          IF (ASSOCIATED(NCF,PUMP_FORCING(J)%NCF)) THEN
              K=SEARCH_NAME(NCF,PUMPS(I)%NAME,'pumps','pump_names')
 
-             ! THIS IS MY PLUME SO SET THE INDEX
+             ! THIS IS MY PUMP SO SET THE INDEX
              IF (MINE) PUMP_FORCING(J)%PUMP_FILE2LOC(K)=RCNT
 
           END IF
@@ -2650,7 +2629,6 @@ CONTAINS
          &CTING 'm^3s^-1'")	 
   END SUBROUTINE CHECK_PUMP_FILE
 # endif
->>>>>>> 25dd76c (implemented a pump module dealing with pumping water out of the domain, as a negative river in the middile of the domain)
   !================================================================
   !================================================================
 
@@ -13813,7 +13791,6 @@ CONTAINS
 
   END SUBROUTINE UPDATE_RIVERS
 
-!===================================================================================|
 # if defined (PLUME)
   !==============================================================================|
   ! UPDATE PLUMES FROM NAMELIST, added by Qin 05/03/2019
@@ -14043,74 +14020,6 @@ CONTAINS
     END DO ! FOR EACH FILE
 
   END SUBROUTINE UPDATE_PLUMES
-# endif
-
-  !==============================================================================|
-  ! UPDATE PUMPS FROM NAMELIST, added by Qin 28/01/2020
-  !==============================================================================|
-# if defined (PUMP)
-  SUBROUTINE UPDATE_PUMPS(NOW,FLUX)
-
-    IMPLICIT NONE
-    TYPE(TIME), INTENT(IN) :: NOW
-    REAL(SP), ALLOCATABLE :: FLUX(:)
-    REAL(SP), POINTER :: VNP(:), VPP(:)
-
-    REAL(SP), ALLOCATABLE :: CURRENT(:)
-    TYPE(TIME) :: PUMPTIME
-
-    TYPE(NCFILE), POINTER :: NCF
-    TYPE(NCVAR), POINTER :: VAR_N
-    TYPE(NCVAR), POINTER :: VAR_P
-    TYPE(NCFTIME), POINTER :: FTM
-    INTEGER :: STATUS, I, J, NRSF,IND,NS
-
-    IF(.NOT. ALLOCATED(FLUX)) CALL FATAL_ERROR &
-         &("THE PUMP FLUX VARIABLE PASSED TO UPDATE IS NOT ALLOCATED")
-
-    DO I = 1, SIZE(PUMP_FORCING) ! (NUMBER OF FILES)
-
-       PUMPTIME = NOW
-       
-       NCF => PUMP_FORCING(I)%NCF
-       FTM => NCF%FTIME
-
-       NRSF = PUMP_FORCING(I)%PUMPS_IN_FILE
-
-       ! PUMP FLUX
-       VAR_N => PUMP_FORCING(I)%FLUX_N
-       VAR_P => PUMP_FORCING(I)%FLUX_P
-       CALL UPDATE_VAR_BRACKET(NCF,VAR_P,VAR_N,PUMPTIME,STATUS)
-       IF (STATUS /= 0) THEN
-          CALL FATAL_ERROR("COULD NOT UPDATE PUMP_FILE TIME BRACKET: BOUNDS EXCEEDED?")
-       end if
-
-       ALLOCATE(CURRENT(NRSF))
-
-       CALL NC_POINT_VAR(VAR_N,VNP)
-       CALL NC_POINT_VAR(VAR_P,VPP)
-
-       !====================================================
-       ! Linear interpolation between time points
-       !CURRENT = FTM%NEXT_WGHT * VNP + FTM%PREV_WGHT * VPP
-       !
-       ! OR
-       !
-       ! Nearest time sets the value
-       CURRENT = VNP
-       if (FTM%PREV_WGHT .gt. 0.5_sp) CURRENT = VPP
-       !====================================================
-
-       DO J =1,NRSF
-          IND = PUMP_FORCING(I)%PUMP_FILE2LOC(J)
-          IF(IND /= 0) FLUX(IND) = CURRENT(J)
-       END DO
-
-       DEALLOCATE(CURRENT)
-          
-    END DO ! FOR EACH FILE
-
-  END SUBROUTINE UPDATE_PUMPS
 # endif
 
   !==============================================================================|
