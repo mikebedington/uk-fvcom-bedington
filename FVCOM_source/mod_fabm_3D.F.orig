@@ -300,16 +300,6 @@ MODULE MOD_FABM_3D
           II=II+1
        END IF
     END DO
-<<<<<<< HEAD
-=======
-
-! Added by Håvard 2019
-# if defined (PLUME_CALCULATED)
-   ALLOCATE(FABMPLM(0:MT,KB,size(model%state_variables)));            FABMPLM    = ZERO
-   ALLOCATE(FPLM_TMP(0:MT,KB));                                       FPLM_TMP   = ZERO ! Ps. Stupid to store it, it is here for ease of development purposes.
-# endif
-
->>>>>>> 60e9d1b (Changes to make the plume model run on multiprocessor experiments)
 ! link model variable to dummy ERSEM1 variable. 
 !   NAME_ ='O2_o'
 !      DO IFABM=1,SIZE(model%interior_state_variables)
@@ -1430,9 +1420,13 @@ END SUBROUTINE FABM_MIXING
   REAL(SP), DIMENSION(0:MT,KB)     :: BETAIN  !! temporary beta coefficient in corrected part
   REAL(SP), DIMENSION(0:MT,KB)     :: BETAOUT !! temporary beta coefficient in corrected part
   REAL(SP), DIMENSION(0:MT,KB)     :: FABM_FRESH    !! for source term which also bring mass volume
+<<<<<<< HEAD
 !lwang for MPDATA 0316
   REAL(SP), DIMENSION(0:MT,KB)     :: OFFS    !! Offset to WQM field to avoid values less than zero.
 !lwang
+=======
+  REAL(SP)                         :: OFFS    !! offset for close-to-zero variables
+>>>>>>> f95d11b (Removed adjust_ts, added pump tweaks)
   INTEGER ITERA, NTERA
 #  endif
    REAL(SP) :: FABM_MEAN
@@ -1478,11 +1472,21 @@ END SUBROUTINE FABM_MIXING
 #   endif
 # endif
 
+<<<<<<< HEAD
 !lwang for MPDATA 0316
 # if defined (MPDATA)
   OFFS = 5.0_SP
 # endif
 !lwang
+=======
+# if defined (MPDATA)
+  ! Add offset to force FVCOM not to crash when tracers are close to zero
+  OFFS = 5.0_SP
+  FABM_ALL = FABM_ALL + OFFS
+# endif
+
+
+>>>>>>> f95d11b (Removed adjust_ts, added pump tweaks)
   !
   !--Initialize Fluxes-----------------------------------------------------------!
   !
@@ -1756,6 +1760,7 @@ END SUBROUTINE FABM_MIXING
   FABM_FRESH=FABM_ALL(:,:,IFABM)
 
 
+<<<<<<< HEAD
   IF (.NOT. model%interior_state_variables(IFABM)%no_river_dilution) THEN
       IF(RIVER_TS_SETTING == 'calculated') THEN
          IF(RIVER_INFLOW_LOCATION == 'node') THEN
@@ -1792,13 +1797,46 @@ END SUBROUTINE FABM_MIXING
         IF (DBG_SET(DBG_VRB)) WRITE (IPT,*) "FABM Variable "//TRIM(model%interior_state_variables(IFABM)%name)//" is not in river forcing file and will not be diluted"
     END IF
  !
+=======
+  IF(RIVER_TS_SETTING == 'calculated') THEN
+     IF(RIVER_INFLOW_LOCATION == 'node') THEN
+        IF(NUMQBC > 0) THEN
+           DO J=1,NUMQBC
+              JJ=INODEQ(J)
+              STPOINT=FABMDIS(J,IFABM)+OFFS
+              DO K=1,KBM1
+                 FABM_FRESH(JJ,K)=FABMDIS(J,IFABM)+OFFS
+                 XFLUX(JJ,K,IFABM)=XFLUX(JJ,K,IFABM) - QDIS(J)*VQDIST(J,K)*STPOINT
+              END DO
+           END DO
+        END IF
+     ELSE IF(RIVER_INFLOW_LOCATION == 'edge') THEN
+        IF(NUMQBC > 0) THEN
+           DO J=1,NUMQBC
+              J1=N_ICELLQ(J,1)
+              J2=N_ICELLQ(J,2)
+              STPOINT=FABMDIS(J,IFABM)+OFFS!!ASK LIU SHOULD THIS BE STPOINT1(J1)/STPOINT2(J2)
+              DO K=1,KBM1
+                 FABM_FRESH(J1,K)=FABMDIS(J,IFABM)+OFFS
+                 FABM_FRESH(J2,K)=FABMDIS(J,IFABM)+OFFS
+                 XFLUX(J1,K,IFABM)=XFLUX(J1,K,IFABM)-  &
+                      QDIS(J)*RDISQ(J,1)*VQDIST(J,K)*STPOINT
+                 XFLUX(J2,K,IFABM)=XFLUX(J2,K,IFABM)-  &
+                      QDIS(J)*RDISQ(J,2)*VQDIST(J,K)*STPOINT
+              END DO
+           END DO
+        END IF
+     END IF
+  END IF
+  !
+>>>>>>> f95d11b (Removed adjust_ts, added pump tweaks)
  !--------------------------------Plum flux part----------------------
 ! Added by Qin 07/03/2019
 # if  defined (PLUME)
   DO I=1,M
        DO K=1,KBM1
   !             FABM_FRESH(JJ,K)=FABMDIS(J,K,IFABM)
-               XFLUX(I,K,IFABM)=XFLUX(I,K,IFABM) - FLXPLM(I,K)*FABMPLM(I,K,IFABM)
+               XFLUX(I,K,IFABM)=XFLUX(I,K,IFABM) - FLXPLM(I,K)*VDISTPLM(I,K)*FABMPLM(I,K,IFABM)
          END DO
      END DO
 
@@ -2006,6 +2044,7 @@ END SUBROUTINE FABM_MIXING
   !--------------------------------------------------------------------------
   ! End of smolarkiewicz upwind loop
   !--------------------------------------------------------------------------
+<<<<<<< HEAD
 !lwang for MPDATA 0316
   FABM_ALL(:,:,IFABM) = FABM_ALL(:,:,IFABM)-OFFS(:,:)
   WQM_SF = WQM_SF-OFFS
@@ -2013,6 +2052,14 @@ END SUBROUTINE FABM_MIXING
 !lwang
 #  endif 
 ! MPDATA IF
+=======
+
+  ! REMOVE OFFSET @HES2020
+  FABM_ALL = FABM_ALL-1
+  FABM_MEAN = FABM_MEAN-1
+
+#  endif
+>>>>>>> f95d11b (Removed adjust_ts, added pump tweaks)
 
 
 # if ! defined(MPDATA)
@@ -2084,7 +2131,7 @@ END SUBROUTINE FABM_MIXING
 #    if defined (WET_DRY)
      END IF
 #    endif
-  END DO  !! SIGMA LOOP
+  END DO  !! SIGMA LOOP "
 
   !
   !--Set Boundary Conditions-For Fresh Water Flux--------------------------------!
@@ -2162,7 +2209,7 @@ END SUBROUTINE FABM_MIXING
 # else
    DO I=1,M
          DO K=1,KBM1
-              XFLUX(I,K,IFABM)=XFLUX(I,K,IFABM) - FLXPLM(I,K)*FABMPLM(I,K,IFABM)
+              XFLUX(I,K,IFABM)=XFLUX(I,K,IFABM) - FLXPLM(I,K)*VDISTPLM(I,K)*FABMPLM(I,K,IFABM)
          END DO
    END DO
 # endif
