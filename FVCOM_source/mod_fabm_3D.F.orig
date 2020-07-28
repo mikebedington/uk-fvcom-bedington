@@ -1854,7 +1854,12 @@ END SUBROUTINE FABM_MIXING
               WQMMIN = MIN(WQMMIN,FABM_ALL(I,K+1,IFABM),FABM_ALL(I,K-1,IFABM),FABM_ALL(I,K,IFABM),FABM_FRESH(I,K))
            END IF
 
+<<<<<<< HEAD
          ! Total (horizontal + vertical) flux to the cell
+=======
+           ! In case of single precision MPDATA crash: Add the changes already implemented to temperature and salinity.
+
+>>>>>>> 2a43db0 (Added anti-single precision crash mechanism to the temperature advection routine)
            ZZZFLUX(I,K) = TEMP*(DTI/DT(I))/DZ(I,K) + XFLUX(I,K,IFABM)/ART1(I)*(DTI/DT(I))/DZ(I,K) 
          ! Updated variable without limiter minus current variable
            XXXX = ZZZFLUX(I,K)*DT(I)/DTFA(I)+FABM_ALL(I,K,IFABM)-FABM_ALL(I,K,IFABM)*DT(I)/DTFA(I) 
@@ -1996,7 +2001,6 @@ END SUBROUTINE FABM_MIXING
   !--------------------------------------------------------------------------
   ! End of smolarkiewicz upwind loop
   !--------------------------------------------------------------------------
-<<<<<<< HEAD
 !lwang for MPDATA 0316
   FABM_ALL(:,:,IFABM) = FABM_ALL(:,:,IFABM)-OFFS(:,:)
   WQM_SF = WQM_SF-OFFS
@@ -2004,14 +2008,6 @@ END SUBROUTINE FABM_MIXING
 !lwang
 #  endif 
 ! MPDATA IF
-=======
-
-  ! REMOVE OFFSET @HES2020
-  FABM_ALL  = FABM_ALL-OFFS
-  FABM_MEAN = FABM_MEAN-OFFS
-
-#  endif
->>>>>>> 9ec19e1 (offset fix)
 
 
 # if ! defined(MPDATA)
